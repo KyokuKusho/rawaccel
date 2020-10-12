@@ -244,7 +244,6 @@ namespace grapher
                 Motivity,
                 SynchronousSpeed,
                 Gamma,
-                WriteButton,
                 top);
         }
 

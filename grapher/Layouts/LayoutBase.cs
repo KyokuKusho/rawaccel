@@ -41,10 +41,8 @@ namespace grapher.Layouts
             IOption motivityOption,
             IOption synchronousSpeedOption,
             IOption gammaOption,
-            Button button,
             int top)
         {
-            button.Enabled = ButtonEnabled;
 
             IOption previous = null;
 
@@ -74,13 +72,11 @@ namespace grapher.Layouts
         public void Layout(
             IOption motivityOption,
             IOption synchronousSpeedOption,
-            IOption gammaOption,
-            Button button)
+            IOption gammaOption)
         {
             Layout(motivityOption,
                 synchronousSpeedOption,
                 gammaOption,
-                button,
                 motivityOption.Top);
         }
     }
