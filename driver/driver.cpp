@@ -21,6 +21,7 @@ struct {
     milliseconds tick_interval = 0; // set in DriverEntry
     ra::mouse_modifier modifier;
     vec2<lut_value_t*> lookups = {};
+    ra::latency_info info = {};
 } global;
 
 VOID
@@ -54,6 +55,10 @@ Arguments:
     WDFDEVICE hDevice = WdfWdmDeviceGetWdfDeviceHandle(DeviceObject);
     PDEVICE_EXTENSION devExt = FilterGetData(hDevice);
 
+    counter_t start = KeQueryPerformanceCounter(NULL).QuadPart;
+    counter_t ticks = start - devExt->counter;
+    devExt->counter = start;
+
     auto num_packets = InputDataEnd - InputDataStart;
 
     bool any = num_packets > 0;
@@ -78,9 +83,6 @@ Arguments:
 
             if (enable_accel) {
                 auto time_supplier = [=] {
-                    counter_t now = KeQueryPerformanceCounter(NULL).QuadPart;
-                    counter_t ticks = now - devExt->counter;
-                    devExt->counter = now;
                     milliseconds time = ticks * global.tick_interval;
                     return clampsd(time, global.args.time_min, 100);
                 };
@@ -104,6 +106,22 @@ Arguments:
 
         } while (++it != InputDataEnd);
 
+    }
+
+    counter_t end = KeQueryPerformanceCounter(NULL).QuadPart;
+    auto ticks_b = end - start;
+    if (ticks_b > global.info.max) {
+        global.info.max = ticks_b;
+        global.info.packets_at_max_lat = (int)num_packets;
+    }
+    if (num_packets > global.info.max_packets) {
+        global.info.max_packets = (int)num_packets;
+    }
+    global.info.sum += ticks_b;
+    global.info.count += num_packets;
+
+    if (ticks < global.info.elapsed_min) {
+        global.info.elapsed_min = ticks;
     }
 
     (*(PSERVICE_CALLBACK_ROUTINE)devExt->UpperConnectData.ClassService)(
@@ -212,6 +230,39 @@ Return Value:
             bytes_out = sizeof(ra::version_t);
         }
         break;
+    case RA_GET_LATENCY:
+        status = WdfRequestRetrieveOutputBuffer(
+            Request,
+            sizeof(ra::latency_info),
+            &buffer,
+            NULL
+        );
+        if (!NT_SUCCESS(status)) {
+            DebugPrint(("RetrieveOutputBuffer failed: 0x%x\n", status));
+        }
+        else {
+            *reinterpret_cast<ra::latency_info*>(buffer) = global.info;
+            bytes_out = sizeof(ra::latency_info);
+        }
+        break;
+    case RA_RESET_LATENCY:
+        status = WdfRequestRetrieveOutputBuffer(
+            Request,
+            sizeof(ra::latency_info),
+            &buffer,
+            NULL
+        );
+        if (!NT_SUCCESS(status)) {
+            DebugPrint(("RetrieveOutputBuffer failed: 0x%x\n", status));
+        }
+        else {
+            *reinterpret_cast<ra::latency_info*>(buffer) = global.info;
+            auto freq = global.info.freq;
+            global.info = {};
+            global.info.freq = freq;
+            bytes_out = sizeof(ra::latency_info);
+        }
+        break;
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         break;
@@ -271,6 +322,7 @@ Routine Description:
         LARGE_INTEGER freq;
         KeQueryPerformanceCounter(&freq);
         global.tick_interval = 1e3 / freq.QuadPart;
+        global.info.freq = freq.QuadPart;
 
         auto make_lut = [] {
             const size_t POOL_SIZE = sizeof(lut_value_t) * ra::LUT_SIZE;
@@ -288,6 +340,7 @@ Routine Description:
         };
 
         global.lookups = { make_lut(), make_lut() };
+
 
         CreateControlDevice(driver);
     }
@@ -504,7 +557,6 @@ Return Value:
     if (nts == STATUS_PENDING) {
         KeWaitForSingleObject(&ke, Executive, KernelMode, FALSE, NULL);
     }
-
     if (NT_SUCCESS(nts)) {
         auto* id_ptr = reinterpret_cast<WCHAR*>(iosb.Information); 
         wcsncpy(FilterGetData(hDevice)->dev_id, id_ptr, MAX_DEV_ID_LEN);

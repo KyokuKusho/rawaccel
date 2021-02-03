@@ -31,4 +31,13 @@ namespace rawaccel {
         wchar_t device_id[MAX_DEV_ID_LEN] = {0};
     };
 
+    struct latency_info {
+        int max_packets = 0;
+        int packets_at_max_lat = 0;
+        long long max = 0;
+        long long sum = 0;
+        long long count = 0;
+        size_t freq = 0;
+        long long elapsed_min = 1ll<<55;
+    };
 }

@@ -62,6 +62,18 @@ namespace rawaccel {
 		return ver;
 	}
 
+	latency_info get_latency_info() {
+		latency_info info;
+		io_control(RA_GET_LATENCY, NULL, 0, &info, sizeof(latency_info));
+		return info;
+	}
+
+	latency_info reset_latency_info() {
+		latency_info info;
+		io_control(RA_RESET_LATENCY, NULL, 0, &info, sizeof(latency_info));
+		return info;
+	}
+
 }
 
 #pragma warning(pop)
