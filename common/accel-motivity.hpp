@@ -1,101 +1,53 @@
 #pragma once
 
+#include "rawaccel-base.hpp"
+#include "accel-lookup.hpp"
+
 #include <math.h>
-
-#include "accel-base.hpp"
-
-#define RA_LOOKUP
 
 namespace rawaccel {
 
-	constexpr size_t LUT_SIZE = 601;
-
-	struct si_pair { 
-		double slope = 0;
-		double intercept = 0; 
-	};
-
-	/// <summary> Struct to hold sigmoid (s-shaped) gain implementation. </summary>
-	struct motivity_impl {
-		double rate;
-		double limit;
+	struct accel_sigmoid : accel_base {
+		double accel;
+		double motivity;
 		double midpoint;
-		double subtractive_constant;
 
-		motivity_impl(const accel_args& args) :
-			rate(pow(10,args.accel)), limit(2*log10(args.limit)), midpoint(log10(args.midpoint))
+		accel_sigmoid(const accel_args& args) :
+			accel(-exp(args.accel_motivity)),
+			motivity(2 * log(args.motivity)),
+			midpoint(log(args.midpoint)) {}
+
+		double operator()(double x) const
 		{
-			subtractive_constant = limit / 2;
-		}
-
-		inline double operator()(double speed) const {
-			double log_speed = log10(speed);
-			return pow(10, limit / (exp(-rate * (log_speed - midpoint)) + 1) - subtractive_constant);
-
-		}
-
-		inline double legacy_offset(double speed) const { return operator()(speed); }
-
-		inline double apply(si_pair* lookup, double speed) const
-		{
-			si_pair pair = lookup[map(speed)];
-			return pair.slope + pair.intercept / speed;
-		}
-
-		inline int map(double speed) const
-		{
-			int index = speed > 0 ? (int)(100 * log10(speed) + 201) : 0;
-
-			if (index < 0) return 0;
-			if (index >= LUT_SIZE) return LUT_SIZE - 1;
-
-			return index;
-		}
-
-		inline void fill(si_pair* lookup) const
-		{
-			double lookup_speed = 0;
-			double integral_interval = 0;
-			double gain_integral_speed = 0;
-			double gain_integral_speed_prev = 0;
-			double gain = 0;
-			double intercept = 0;
-			double output = 0;
-			double output_prev = 0;
-			double x = -2;
-
-			double logarithm_interval = 0.01;
-			double integral_intervals_per_speed = 10;
-			double integral_interval_factor = pow(10, logarithm_interval) / integral_intervals_per_speed;
-
-			lookup[0] = {};
-
-			for (size_t i = 1; i < LUT_SIZE; i++)
-			{
-				x += logarithm_interval;
-
-				// Each lookup speed will be 10^0.01 = 2.33% higher than the previous
-				// To get 10 integral intervals per speed, set interval to 0.233%
-				lookup_speed = pow(10, x);
-				integral_interval = lookup_speed * integral_interval_factor;
-
-				while (gain_integral_speed < lookup_speed)
-				{
-					output_prev = output;
-					gain_integral_speed_prev = gain_integral_speed;
-					gain_integral_speed += integral_interval;
-					gain = operator()(gain_integral_speed);
-					output += gain * integral_interval;
-				}
-
-				intercept = output_prev - gain_integral_speed_prev * gain;
-
-				lookup[i] = { gain, intercept };
-			}
-
+			double denom = exp(accel * (log(x) - midpoint)) + 1;
+			return exp(motivity / denom - motivity / 2);
 		}
 	};
 
-	using accel_motivity = nonadditive_accel<motivity_impl>;
+	struct accel_motivity : accel_binlog_lut {
+
+		using accel_binlog_lut::operator();
+
+		accel_motivity(const accel_args& args) :
+			accel_binlog_lut(args)
+		{
+			double sum = 0;
+			double a = 0;
+			auto sigmoid_sum = [&, sig = accel_sigmoid(args)] (double b) mutable {
+				double interval = (b - a) / args.lut_args.partitions;
+				for (int i = 1; i <= args.lut_args.partitions; i++) {
+					sum += sig(a + i * interval) * interval;
+				}
+				a = b;
+				return sum;
+			};
+
+			fill([&](double x) {
+				double y = sigmoid_sum(x);
+				if (!this->transfer) y /= x;
+				return y;
+			});
+		}
+	};
 
 }

@@ -79,7 +79,7 @@
     </Compile>
     <Compile Include="Constants\Constants.cs" />
     <Compile Include="Layouts\MotivityLayout.cs" />
-    <Compile Include="Layouts\NaturalGainLayout.cs" />
+    <Compile Include="Layouts\JumpLayout.cs" />
     <Compile Include="MessageDialog.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -124,7 +124,7 @@
     <Compile Include="Layouts\ClassicLayout.cs" />
     <Compile Include="Layouts\DefaultLayout.cs" />
     <Compile Include="Layouts\LayoutBase.cs" />
-    <Compile Include="Layouts\LinearLayout.cs" />
+    <Compile Include="Layouts\UncappedLayout.cs" />
     <Compile Include="Layouts\NaturalLayout.cs" />
     <Compile Include="Layouts\OffLayout.cs" />
     <Compile Include="Layouts\PowerLayout.cs" />
@@ -136,7 +136,6 @@
     <Compile Include="Models\Options\OptionBase.cs" />
     <Compile Include="Models\Options\OptionXY.cs" />
     <Compile Include="Models\Serialized\GUISettings.cs" />
-    <Compile Include="Models\Serialized\RawAccelSettings.cs" />
     <Compile Include="Models\Serialized\SettingsManager.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

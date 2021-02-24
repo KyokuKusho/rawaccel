@@ -6,10 +6,10 @@
 
 #define RA_OS "Win7+"
 
-#define M_STR_HELPER(x) #x
-#define M_STR(x) M_STR_HELPER(x)
+#define RA_M_STR_HELPER(x) #x
+#define RA_M_STR(x) RA_M_STR_HELPER(x)
 
-#define RA_VER_STRING M_STR(RA_VER_MAJOR) "." M_STR(RA_VER_MINOR) "." M_STR(RA_VER_PATCH)
+#define RA_VER_STRING RA_M_STR(RA_VER_MAJOR) "." RA_M_STR(RA_VER_MINOR) "." RA_M_STR(RA_VER_PATCH)
 
 namespace rawaccel {
 
@@ -19,6 +19,16 @@ namespace rawaccel {
 		int patch;
 	};
 
+	constexpr bool operator<(const version_t& lhs, const version_t& rhs)
+	{
+		return (lhs.major != rhs.major) ?
+			   (lhs.major < rhs.major)  :
+			   (lhs.minor != rhs.minor) ?
+			   (lhs.minor < rhs.minor)  :
+			   (lhs.patch < rhs.patch)  ;
+	}
+
+	inline constexpr version_t build_version = { RA_VER_MAJOR, RA_VER_MINOR, RA_VER_PATCH };
 #ifndef _KERNEL_MODE
 	inline constexpr version_t min_driver_version = { 1, 4, 0 };
 #endif

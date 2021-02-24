@@ -12,15 +12,15 @@ namespace grapher.Layouts
         public const string Midpoint = "Midpoint";
         public const string Motivity = "Motivity";
         public const string Offset = "Offset";
-        public const string Cap = "Cap";
-        public const string Weight = "Weight";
+        public const string Cap = "Cap Y";
+        public const string CapX = "Cap X";
 
         public LayoutBase()
         {
             AccelLayout = new OptionLayout(false, string.Empty);
             ScaleLayout = new OptionLayout(false, string.Empty);
             CapLayout = new OptionLayout(false, string.Empty);
-            WeightLayout = new OptionLayout(false, string.Empty);
+            CapXLayout = new OptionLayout(false, string.Empty);
             OffsetLayout = new OptionLayout(false, string.Empty);
             LimitLayout = new OptionLayout(false, string.Empty);
             ExponentLayout = new OptionLayout(false, string.Empty);
@@ -45,7 +45,7 @@ namespace grapher.Layouts
 
         protected OptionLayout CapLayout { get; set; }
 
-        protected OptionLayout WeightLayout { get; set; }
+        protected OptionLayout CapXLayout { get; set; }
 
         protected OptionLayout OffsetLayout { get; set; }
 
@@ -59,7 +59,7 @@ namespace grapher.Layouts
             IOption accelOption,
             IOption scaleOption,
             IOption capOption,
-            IOption weightOption,
+            IOption capXOption,
             IOption offsetOption,
             IOption limitOption,
             IOption expOption,
@@ -72,8 +72,8 @@ namespace grapher.Layouts
             foreach (var option in new (OptionLayout, IOption)[] {
                 (AccelLayout, accelOption),
                 (ScaleLayout, scaleOption),
+                (CapXLayout, capXOption),
                 (CapLayout, capOption),
-                (WeightLayout, weightOption),
                 (OffsetLayout, offsetOption),
                 (LimitLayout, limitOption),
                 (ExponentLayout, expOption),
@@ -101,7 +101,7 @@ namespace grapher.Layouts
             IOption accelOption,
             IOption scaleOption,
             IOption capOption,
-            IOption weightOption,
+            IOption capXOption,
             IOption offsetOption,
             IOption limitOption,
             IOption expOption,
@@ -110,7 +110,7 @@ namespace grapher.Layouts
             Layout(accelOption,
                 scaleOption,
                 capOption,
-                weightOption,
+                capXOption,
                 offsetOption,
                 limitOption,
                 expOption,

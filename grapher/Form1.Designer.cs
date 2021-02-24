@@ -1503,6 +1503,7 @@ namespace grapher
             this.Controls.Add(this.chartsPanel);
             this.Controls.Add(this.optionsPanel);
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
+            this.KeyPreview = true;
             this.Name = "RawAcceleration";
             this.Text = "Raw Accel";
             this.optionsPanel.ResumeLayout(false);

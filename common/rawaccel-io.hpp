@@ -1,21 +1,20 @@
 #pragma once
 
-#include <system_error>
-
-#define NOMINMAX
-#include <Windows.h>
-
 #include "rawaccel-io-def.h"
-#include "rawaccel-settings.h"
 #include "rawaccel-version.h"
 #include "rawaccel-error.hpp"
+#include "rawaccel.hpp"
+
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <Windows.h>
 
 #pragma warning(push)
 #pragma warning(disable:4245) // int -> DWORD conversion while passing CTL_CODE
 
 namespace rawaccel {
 
-	void io_control(DWORD code, void* in, DWORD in_size, void* out, DWORD out_size) {
+	inline void io_control(DWORD code, void* in, DWORD in_size, void* out, DWORD out_size) {
 		HANDLE ra_handle = INVALID_HANDLE_VALUE;
 
 		ra_handle = CreateFileW(L"\\\\.\\rawaccel", 0, 0, 0, OPEN_EXISTING, 0, 0);
@@ -40,25 +39,36 @@ namespace rawaccel {
 		CloseHandle(ra_handle);
 
 		if (!success) {
-			throw std::system_error(GetLastError(), std::system_category(), "DeviceIoControl failed");
+			throw sys_error("DeviceIoControl failed");
 		}
 	}
 
-	settings read() {
-		settings args;
-		io_control(RA_READ, NULL, 0, &args, sizeof(settings));
-		return args;
+	inline void read(io_t& args) {
+		io_control(RA_READ, NULL, 0, &args, sizeof(io_t));
 	}
 
-
-	void write(const settings& args) {
-		auto in_ptr = const_cast<settings*>(&args);
-		io_control(RA_WRITE, in_ptr, sizeof(settings), NULL, 0);
+	inline void write(const io_t& args) {
+		io_control(RA_WRITE, const_cast<io_t*>(&args), sizeof(io_t), NULL, 0);
 	}
 
-	version_t get_version() {
+	inline version_t check_version() {
 		version_t ver;
-		io_control(RA_GET_VERSION, NULL, 0, &ver, sizeof(version_t));
+
+		try {
+			io_control(RA_GET_VERSION, NULL, 0, &ver, sizeof(version_t));
+		}
+		catch (const sys_error&) {
+			throw error("driver reinstallation required");
+		}
+
+		if (ver < min_driver_version) {
+			throw error("driver reinstallation required");
+		}
+
+		if (build_version < ver) {
+			throw error("newer driver version is installed");
+		}
+
 		return ver;
 	}
 

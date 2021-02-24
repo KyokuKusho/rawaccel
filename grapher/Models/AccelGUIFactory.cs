@@ -168,7 +168,7 @@ namespace grapher.Models
 
             var directionalityLeft = directionalityPanel.Left;
 
-            var weightX = new Option(
+            var capXX = new Option(
                 weightBoxX,
                 form,
                 1,
@@ -177,7 +177,7 @@ namespace grapher.Models
                 new ActiveValueLabel(weightActiveXLabel, activeValueTitleX),
                 "Weight");
 
-            var weightY = new Option(
+            var capXY = new Option(
                 weightBoxY,
                 form,
                 1,
@@ -337,7 +337,7 @@ namespace grapher.Models
                 accelerationX,
                 scaleX,
                 capOptionsX,
-                weightX,
+                capXX,
                 offsetOptionsX,
                 limitX,
                 exponentX,
@@ -350,7 +350,7 @@ namespace grapher.Models
                 accelerationY,
                 scaleY,
                 capOptionsY,
-                weightY,
+                capXY,
                 offsetOptionsY,
                 limitY,
                 exponentY,

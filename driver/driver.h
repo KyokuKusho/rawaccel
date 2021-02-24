@@ -1,10 +1,11 @@
 #pragma once
 
+#include <rawaccel-base.hpp>
+
+#define NOMINMAX
 #include <ntddk.h>
 #include <kbdmou.h>
 #include <wdf.h>
-
-#include "rawaccel-settings.h"
 
 #if DBG
 #define DebugPrint(_x_) DbgPrint _x_
@@ -15,11 +16,14 @@
 #define NTDEVICE_NAME         L"\\Device\\rawaccel"
 #define SYMBOLIC_NAME_STRING  L"\\DosDevices\\rawaccel"
 
+namespace ra = rawaccel;
+
+using ra::MAX_DEV_ID_LEN;
 using counter_t = long long;
 
 typedef struct _DEVICE_EXTENSION {
     counter_t counter;
-    vec2d carry;
+    ra::vec2d carry;
     CONNECT_DATA UpperConnectData;
     WCHAR dev_id[MAX_DEV_ID_LEN];
 } DEVICE_EXTENSION, *PDEVICE_EXTENSION;
@@ -33,14 +37,14 @@ EVT_WDF_DRIVER_DEVICE_ADD EvtDeviceAdd;
 EVT_WDF_IO_QUEUE_IO_INTERNAL_DEVICE_CONTROL EvtIoInternalDeviceControl;
 EVT_WDF_IO_QUEUE_IO_DEVICE_CONTROL RawaccelControl;
 
+EXTERN_C_END
+
 VOID RawaccelCallback(
     IN PDEVICE_OBJECT DeviceObject,
     IN PMOUSE_INPUT_DATA InputDataStart,
     IN PMOUSE_INPUT_DATA InputDataEnd,
     IN OUT PULONG InputDataConsumed
 );
-
-EXTERN_C_END
 
 VOID CreateControlDevice(WDFDRIVER Driver);
 

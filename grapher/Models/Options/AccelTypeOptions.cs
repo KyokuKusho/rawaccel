@@ -14,10 +14,10 @@ namespace grapher
 
         public static readonly Dictionary<string, LayoutBase> AccelerationTypes = new List<LayoutBase>
         {
-            new LinearLayout(),
+            new JumpLayout(),
+            new UncappedLayout(),
             new ClassicLayout(),
             new NaturalLayout(),
-            new NaturalGainLayout(),
             new PowerLayout(),
             new MotivityLayout(),
             new OffLayout()
@@ -32,7 +32,7 @@ namespace grapher
             Option acceleration,
             Option scale,
             CapOptions cap,
-            Option weight,
+            Option capX,
             OffsetOptions offset,
             Option limit,
             Option exponent,
@@ -48,7 +48,7 @@ namespace grapher
             Acceleration = acceleration;
             Scale = scale;
             Cap = cap;
-            Weight = weight;
+            CapX = capX;
             Offset = offset;
             Limit = limit;
             Exponent = exponent;
@@ -90,7 +90,7 @@ namespace grapher
 
         public CapOptions Cap { get; }
 
-        public Option Weight { get; }
+        public Option CapX { get; }
 
         public OffsetOptions Offset { get; }
 
@@ -168,7 +168,7 @@ namespace grapher
             Acceleration.Hide();
             Scale.Hide();
             Cap.Hide();
-            Weight.Hide();
+            CapX.Hide();
             Offset.Hide();
             Limit.Hide();
             Exponent.Hide();
@@ -187,19 +187,33 @@ namespace grapher
             Show();
         }
 
-        public void SetActiveValues(int index, AccelArgs args)
+        public void SetActiveValues(AccelArgs args)
         {
-            AccelerationType = AccelerationTypes.Where(t => t.Value.Index == index).FirstOrDefault().Value;
+            AccelerationType = AccelerationTypes.Where(t => t.Value.Index == (int)args.mode).FirstOrDefault().Value;
             AccelTypeActiveValue.SetValue(AccelerationType.Name);
             AccelDropdown.SelectedIndex = AccelerationType.Index;
 
-            Weight.SetActiveValue(args.weight);
-            Cap.SetActiveValues(args.gainCap, args.scaleCap, args.gainCap > 0 || args.scaleCap <= 0);
-            Offset.SetActiveValue(args.offset, args.legacyOffset);
-            Acceleration.SetActiveValue(args.acceleration);
+            switch (args.mode)
+            {
+                case AccelMode.uncapped: Acceleration.SetActiveValue(args.accelUncapped); break;
+                case AccelMode.natural: Acceleration.SetActiveValue(args.accelNatural); break;
+                case AccelMode.motivity: Acceleration.SetActiveValue(args.accelMotivity); break;
+                default: break;
+            }
+
+            switch (args.mode)
+            {
+                case AccelMode.uncapped: // fallthrough
+                case AccelMode.classic: Exponent.SetActiveValue(args.power); break;
+                case AccelMode.power: Exponent.SetActiveValue(args.exponent); break;
+                default: break;
+            }
+
+            CapX.SetActiveValue(args.cap.x);
+            Cap.SetActiveValues(args.cap.y, args.cap.y, true);
+            Offset.SetActiveValue(args.offset, !args.gain);
             Scale.SetActiveValue(args.scale);
             Limit.SetActiveValue(args.limit);
-            Exponent.SetActiveValue(args.exponent);
             Midpoint.SetActiveValue(args.midpoint);
         }
 
@@ -227,24 +241,40 @@ namespace grapher
 
         public void SetArgs(ref AccelArgs args)
         {
-            AccelArgs defaults = DriverInterop.DefaultSettings.args.x;
-            args.acceleration = Acceleration.Visible ? Acceleration.Field.Data : defaults.acceleration;
-            args.scale = Scale.Visible ? Scale.Field.Data : defaults.scale;
-            args.gainCap = Cap.Visible ? Cap.VelocityGainCap : defaults.gainCap;
-            args.scaleCap = Cap.Visible ? Cap.SensitivityCap : defaults.scaleCap;
-            args.limit = Limit.Visible ? Limit.Field.Data : defaults.limit;
-            args.exponent = Exponent.Visible ? Exponent.Field.Data : defaults.exponent;
-            args.offset = Offset.Visible ? Offset.Offset : defaults.offset;
-            args.legacyOffset = Offset.IsLegacy;
-            args.midpoint = Midpoint.Visible ? Midpoint.Field.Data : defaults.midpoint;
-            args.weight = Weight.Visible ? Weight.Field.Data : defaults.weight;
-        }
+            args.gain = !Offset.IsLegacy;
+            args.mode = (AccelMode)AccelerationIndex;
 
-        public AccelArgs GenerateArgs()
-        {
-            AccelArgs args = new AccelArgs();
-            SetArgs(ref args);
-            return args;
+            if (Acceleration.Visible)
+            {
+                double accel = Acceleration.Field.Data;
+                switch (args.mode)
+                {
+                    case AccelMode.uncapped: args.accelUncapped = accel; break;
+                    case AccelMode.natural: args.accelNatural = accel; break;
+                    case AccelMode.motivity: args.accelMotivity = accel; break;
+                    default: throw new NotImplementedException();
+                }
+            }
+
+            if (Exponent.Visible)
+            {
+                double exponent = Exponent.Field.Data;
+                switch (args.mode)
+                {
+                    case AccelMode.uncapped: // fallthrough
+                    case AccelMode.classic: args.power = exponent; break;
+                    case AccelMode.power: args.exponent = exponent; break;
+                    default: throw new NotImplementedException();
+                }
+
+            }
+            if (Scale.Visible) args.scale = Scale.Field.Data;
+            if (Cap.Visible) args.cap.y = Cap.SensitivityCap;
+            if (CapX.Visible) args.cap.x = CapX.Field.Data;
+            if (Limit.Visible) args.limit = Limit.Field.Data;
+            if (Exponent.Visible) args.exponent = Exponent.Field.Data;
+            if (Offset.Visible) args.offset = Offset.Offset;
+            if (Midpoint.Visible) args.midpoint = Midpoint.Field.Data;
         }
 
         public override void AlignActiveValues()
@@ -254,7 +284,7 @@ namespace grapher
             Scale.AlignActiveValues();
             Cap.AlignActiveValues();
             Offset.AlignActiveValues();
-            Weight.AlignActiveValues();
+            CapX.AlignActiveValues();
             Limit.AlignActiveValues();
             Exponent.AlignActiveValues();
             Midpoint.AlignActiveValues();
@@ -284,7 +314,7 @@ namespace grapher
                 Acceleration,
                 Scale,
                 Cap,
-                Weight,
+                CapX,
                 Offset,
                 Limit,
                 Exponent,

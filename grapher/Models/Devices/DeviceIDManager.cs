@@ -15,6 +15,10 @@ namespace grapher.Models.Devices
         {
             DeviceIDsMenuItem = deviceIDs;
             DeviceIDsMenuItem.Checked = false;
+            DeviceIDsMenuItem.DropDownItemClicked += (s, e) =>
+            {
+                SelectedDeviceID = (DeviceIDItem)e.ClickedItem.Tag;
+            };
         }
 
         public ToolStripMenuItem DeviceIDsMenuItem { get; }
@@ -39,7 +43,7 @@ namespace grapher.Models.Devices
         public void Update(string devID)
         {
             DeviceIDsMenuItem.DropDownItems.Clear();
-
+            
             bool found = string.IsNullOrEmpty(devID);
 
             var anyDevice = new DeviceIDItem("Any", string.Empty, this);

@@ -28,14 +28,13 @@ namespace grapher
         {
             InitializeComponent();
 
-            Version assemVersion = typeof(RawAcceleration).Assembly.GetName().Version;
             Version driverVersion = null;
 
             try
             {
-                driverVersion = VersionHelper.ValidateAndGetDriverVersion(assemVersion);
+                driverVersion = VersionHelper.CheckDriverVersion();
             }
-            catch (VersionException ex)
+            catch (InteropException ex)
             {
                 MessageBox.Show(ex.Message);
                 throw;
@@ -44,14 +43,16 @@ namespace grapher
             ToolStripMenuItem HelpMenuItem = new ToolStripMenuItem("&Help");
 
             HelpMenuItem.DropDownItems.AddRange(new ToolStripItem[] {
-                    new ToolStripMenuItem("&About", null, (s, e) => new AboutBox(driverVersion).ShowDialog())
-            });
+                    new ToolStripMenuItem(
+                        "&About", 
+                        null, 
+                        (s, e) => new AboutBox(driverVersion).ShowDialog())});
 
             menuStrip1.Items.AddRange(new ToolStripItem[] { HelpMenuItem });
 
             AccelGUI = AccelGUIFactory.Construct(
                 this,
-                ManagedAccel.GetActiveAccel(),
+                ManagedAccel.GetActive(),
                 AccelerationChart,
                 AccelerationChartY,
                 VelocityChart,
@@ -183,6 +184,11 @@ namespace grapher
             else if (m.Msg == 0x00fe) // WM_INPUT_DEVICE_CHANGE
             {
                 AccelGUI.UpdateInputManagers();
+            }
+            else if (m.Msg == Notifications.SettingsChanged)
+            {
+                AccelGUI.SM.SetActiveMembers();
+                AccelGUI.RefreshActive();
             }
 
             base.WndProc(ref m);

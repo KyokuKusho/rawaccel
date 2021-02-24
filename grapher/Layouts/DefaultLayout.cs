@@ -14,7 +14,7 @@ namespace grapher.Layouts
             AccelLayout = new OptionLayout(true, Acceleration);
             ScaleLayout = new OptionLayout(true, Scale);
             CapLayout = new OptionLayout(true, Cap);
-            WeightLayout = new OptionLayout(true, Weight);
+            CapXLayout = new OptionLayout(true, CapX);
             OffsetLayout = new OptionLayout(true, Offset);
             LimitLayout = new OptionLayout(true, Limit);
             ExponentLayout = new OptionLayout(true, Exponent);

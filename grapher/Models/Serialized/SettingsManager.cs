@@ -5,7 +5,7 @@ using System.Threading;
 using System.Text;
 using System.Drawing;
 using grapher.Models.Devices;
-
+using System.IO;
 namespace grapher.Models.Serialized
 {
     public class SettingsManager
@@ -21,22 +21,43 @@ namespace grapher.Models.Serialized
             ToolStripMenuItem showVelocityAndGain,
             DeviceIDManager deviceIDManager)
         {
-            ActiveAccel = activeAccel;
             DpiField = dpiField;
             PollRateField = pollRateField;
             AutoWriteMenuItem = autoWrite;
             ShowLastMouseMoveMenuItem = showLastMouseMove;
             ShowVelocityAndGainMoveMenuItem = showVelocityAndGain;
             DeviceIDManager = deviceIDManager;
+
+            SetActiveMembers(activeAccel);
+
+            GuiSettings = GUISettings.MaybeLoad();
+
+            if (GuiSettings is null)
+            {
+                GuiSettings = MakeGUISettingsFromFields();
+                GuiSettings.Save();
+            }
+            else
+            {
+                UpdateFieldsFromGUISettings();
+            }
+
+            UserSettings = InitUserSettings();
         }
 
         #endregion Constructors
 
         #region Properties
 
-        public ManagedAccel ActiveAccel { get; }
+        public GUISettings GuiSettings { get; private set; }
 
-        public RawAccelSettings RawAccelSettings { get; private set; }
+        public string ActivePath { get; private set; }
+
+        public ManagedAccel ActiveAccel { get; private set; }
+
+        public DriverSettings ActiveSettings { get; private set; }
+
+        public DriverSettings UserSettings { get; private set; }
 
         public Field DpiField { get; private set; }
 
@@ -50,49 +71,80 @@ namespace grapher.Models.Serialized
 
         private ToolStripMenuItem ShowVelocityAndGainMoveMenuItem { get; set; }
 
+        public bool UserSettingsInactive
+        {
+            get => UserSettings != ActiveSettings;
+        }
+
         #endregion Properties
 
         #region Methods
-        public SettingsErrors TryUpdateActiveSettings(DriverSettings settings)
+
+        public void DisableDriver()
         {
-            var errors = TryUpdateAccel(settings);
+            var off = DriverSettings.Default;
+            ActiveSettings = off;
+            ActiveAccel.Settings = off;
+            ActivePath = String.Empty;
+            new Thread(() => ActiveAccel.Activate()).Start();
+        }
+
+        public void SetActiveMembers(ManagedAccel accel = null, String path = null)
+        {
+            if (accel is null)
+            {
+                accel = ManagedAccel.GetActive();
+            }
+
+            if (path is null)
+            {
+                path = String.Empty;
+            }
+
+            ActiveAccel = accel;
+            ActiveSettings = accel.Settings;
+            ActivePath = path;
+        }
+
+        public void UpdateFieldsFromGUISettings()
+        {
+            DpiField.SetToEntered(GuiSettings.DPI);
+            PollRateField.SetToEntered(GuiSettings.PollRate);
+            ShowLastMouseMoveMenuItem.Checked = GuiSettings.ShowLastMouseMove;
+            ShowVelocityAndGainMoveMenuItem.Checked = GuiSettings.ShowVelocityAndGain;
+            AutoWriteMenuItem.Checked = GuiSettings.ActivateOnLoad;
+        }
+
+        public SettingsErrors TryActivate(DriverSettings settings)
+        {
+            var errors = new SettingsErrors(settings);
 
             if (errors.Empty())
             {
-                RawAccelSettings.AccelerationSettings = settings;
-                RawAccelSettings.GUISettings = MakeGUISettingsFromFields();
-                RawAccelSettings.Save();
+                GuiSettings = MakeGUISettingsFromFields();
+                GuiSettings.Save();
+
+                UserSettings = settings;
+                UserSettings.ToFile(DriverSettings.DefaultPath);
+
+                ActiveSettings = settings;
+                ActivePath = GuiSettings.LoadPath;
+                
+                ActiveAccel.Settings = settings;
+
+                new Thread(() => ActiveAccel.Activate()).Start();
             }
 
             return errors;
         }
 
-        public void UpdateFieldsFromGUISettings()
+        public void SetHiddenOptions(DriverSettings settings)
         {
-            DpiField.SetToEntered(RawAccelSettings.GUISettings.DPI);
-            PollRateField.SetToEntered(RawAccelSettings.GUISettings.PollRate);
-            ShowLastMouseMoveMenuItem.Checked = RawAccelSettings.GUISettings.ShowLastMouseMove;
-            ShowVelocityAndGainMoveMenuItem.Checked = RawAccelSettings.GUISettings.ShowVelocityAndGain;
-            AutoWriteMenuItem.Checked = RawAccelSettings.GUISettings.AutoWriteToDriverOnStartup;
-        }
-
-        public SettingsErrors TryUpdateAccel(DriverSettings settings)
-        {
-            var errors = SendToDriverSafe(settings);
-            if (errors.Empty()) ActiveAccel.UpdateFromSettings(settings);
-            return errors;
-        }
-
-        public static void SendToDriver(DriverSettings settings)
-        {
-            new Thread(() => DriverInterop.Write(settings)).Start();
-        }
-
-        public static SettingsErrors SendToDriverSafe(DriverSettings settings)
-        {
-            var errors = DriverInterop.GetSettingsErrors(settings);
-            if (errors.Empty()) SendToDriver(settings);
-            return errors;
+            settings.snap = UserSettings.snap;
+            settings.speedCap = UserSettings.speedCap;
+            settings.minimumTime = UserSettings.minimumTime;
+            settings.maximumTime = UserSettings.maximumTime;
+            settings.directionalMultipliers = UserSettings.directionalMultipliers;
         }
 
         public GUISettings MakeGUISettingsFromFields()
@@ -103,36 +155,45 @@ namespace grapher.Models.Serialized
                 PollRate = (int)PollRateField.Data,
                 ShowLastMouseMove = ShowLastMouseMoveMenuItem.Checked,
                 ShowVelocityAndGain = ShowVelocityAndGainMoveMenuItem.Checked,
-                AutoWriteToDriverOnStartup = AutoWriteMenuItem.Checked
+                ActivateOnLoad = AutoWriteMenuItem.Checked,
+                ActivateOnLogin = false,
+                LoadPath = DriverSettings.DefaultPath
             };
         }
 
-        // Returns true when file settings are active
-        public bool Startup()
+        private DriverSettings InitUserSettings()
         {
-            if (RawAccelSettings.Exists())
+            if (File.Exists(GuiSettings.LoadPath))
             {
                 try
                 {
-                    RawAccelSettings = RawAccelSettings.Load(() => MakeGUISettingsFromFields());
-                    UpdateFieldsFromGUISettings();
-                    if (RawAccelSettings.GUISettings.AutoWriteToDriverOnStartup)
+                    var settings = DriverSettings.FromFile(GuiSettings.LoadPath);
+
+                    if (!GuiSettings.ActivateOnLoad || 
+                        ActiveSettings.args.x.lutArgs.mode != TableMode.off ||
+                        TryActivate(settings).Empty())
                     {
-                        TryUpdateAccel(RawAccelSettings.AccelerationSettings);
+                        return settings;
                     }
-                    return RawAccelSettings.GUISettings.AutoWriteToDriverOnStartup;
+                    
                 }
                 catch (JsonException e)
                 {
-                    Console.WriteLine($"bad settings: {e}");
+                    System.Diagnostics.Debug.WriteLine($"bad settings: {e}");
                 }
             }
 
-            RawAccelSettings = new RawAccelSettings(
-                DriverInterop.GetActiveSettings(),
-                MakeGUISettingsFromFields());
-            RawAccelSettings.Save();
-            return true;
+            if (ActiveSettings.args.x.lutArgs.mode == TableMode.off)
+            {
+                ActiveSettings.ToFile(GuiSettings.LoadPath);
+                return ActiveSettings;
+            }
+            else
+            {
+                var defaultSettings = DriverSettings.Default;
+                defaultSettings.ToFile(GuiSettings.LoadPath);
+                return defaultSettings;
+            }
         }
 
         #endregion Methods

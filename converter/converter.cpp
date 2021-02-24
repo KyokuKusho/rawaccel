@@ -1,3 +1,5 @@
+#include <accel-polynomial.hpp>
+
 #include <array>
 #include <charconv>
 #include <filesystem>
@@ -7,7 +9,7 @@
 #include <sstream>
 #include <string>
 
-#include <rawaccel-settings.h>
+
 
 using namespace System;
 using namespace System::Runtime::InteropServices;
@@ -108,7 +110,7 @@ auto make_extractor(const ia_settings_t& ia_settings) {
     };
 }
 
-ra::accel_args convert_natural(const ia_settings_t& ia_settings) {
+ra::accel_args convert_natural(const ia_settings_t& ia_settings, bool gain) {
     auto get = make_extractor(ia_settings);
 
     double accel = get("Acceleration").value_or(0);
@@ -118,7 +120,12 @@ ra::accel_args convert_natural(const ia_settings_t& ia_settings) {
 
     ra::accel_args args;
     args.limit = 1 + std::abs(cap - sens) / sens;
-    args.accel = accel * prescale / sens;
+    args.accel_natural = accel * prescale / sens;
+
+    args.mode = ra::accel_mode::natural;
+    args.gain_mode = gain;
+    args.offset = get("Offset").value_or(0);
+
     return args;
 }
 
@@ -136,19 +143,17 @@ ra::accel_args convert_quake(const ia_settings_t& ia_settings, bool legacy) {
     double powm1 = power - 1;
     double rpowm1 = 1 / powm1;
     double accel_b = std::pow(accel * prescale, powm1) / sens;
-    args.accel = std::pow(accel_b, rpowm1);
-    args.exponent = power;
-    args.legacy_offset = legacy;
-    args.offset = offset;
-    
+
+    double accel_converted = std::pow(accel_b, rpowm1);
     double cap_converted = cap / sens;
 
-    if (legacy || cap_converted <= 1) {
-        args.scale_cap = cap_converted;
-    }
-    else {
-        args.gain_cap = offset + std::pow(cap_converted - 1, rpowm1) / args.accel;
-    }
+    args.cap.x = ra::power_traits::inv(cap_converted, accel_converted, powm1);
+    args.cap.y = cap_converted;
+    args.exponent = power;
+    args.offset = offset;
+    
+    args.mode = ra::accel_mode::classic;
+    args.gain_mode = !legacy;
 
     return args;
 }
@@ -170,15 +175,13 @@ bool try_convert(const ia_settings_t& ia_settings) {
     case IA_QL: {
         bool legacy = !ask("We recommend trying out our new cap and offset styles.\n"
                            "Use new cap and offset?");
-        ra_settings.modes.x = ra::accel_mode::classic;
         ra_settings.argsv.x = convert_quake(ia_settings, legacy);
         break;
     }
     case IA_NAT: {
         bool nat_gain = ask("Raw Accel offers a new mode that you might like more than Natural.\n"
                             "Wanna try it out now?");
-        ra_settings.modes.x = nat_gain ? ra::accel_mode::naturalgain : ra::accel_mode::natural;
-        ra_settings.argsv.x = convert_natural(ia_settings);
+        ra_settings.argsv.x = convert_natural(ia_settings, nat_gain);
         break;
     }
     case IA_LOG: {
@@ -189,7 +192,7 @@ bool try_convert(const ia_settings_t& ia_settings) {
     }
 
     DriverSettings^ new_settings = Marshal::PtrToStructure<DriverSettings^>((IntPtr)&ra_settings);
-    auto errors = DriverInterop::GetSettingsErrors(new_settings);
+    auto errors = gcnew SettingsErrors(new_settings);
 
     if (!errors->Empty()) {
         Console::WriteLine("Bad settings: {0}", errors);
@@ -197,7 +200,7 @@ bool try_convert(const ia_settings_t& ia_settings) {
     }
 
     Console::Write("Sending to driver... ");
-    DriverInterop::Write(new_settings);
+    ManagedAccel::Send(new_settings);
     Console::WriteLine("done");
 
     Console::Write("Generating settings.json... ");
@@ -208,10 +211,6 @@ bool try_convert(const ia_settings_t& ia_settings) {
     return true;
 }
 
-public ref struct ASSEMBLY {
-    static initonly Version^ VERSION = ASSEMBLY::typeid->Assembly->GetName()->Version;
-};
-
 int main()
 {
     auto close_prompt = [] {
@@ -221,9 +220,9 @@ int main()
     };
 
     try {
-        VersionHelper::ValidateAndGetDriverVersion(ASSEMBLY::VERSION);
+        VersionHelper::CheckDriverVersion();
     }
-    catch (VersionException^ ex) {
+    catch (InteropException^ ex) {
         Console::WriteLine(ex->Message);
         close_prompt();
     }

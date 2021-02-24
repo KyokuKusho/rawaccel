@@ -1,8 +1,10 @@
+#include "driver.h"
+
 #include <rawaccel.hpp>
 #include <rawaccel-io-def.h>
 #include <rawaccel-version.h>
 
-#include "driver.h"
+#include <xmmintrin.h>
 
 #ifdef ALLOC_PRAGMA
 #pragma alloc_text (INIT, DriverEntry)
@@ -11,17 +13,16 @@
 #pragma alloc_text (PAGE, RawaccelControl)
 #endif
 
-namespace ra = rawaccel;
+using ra::milliseconds;
 
-using milliseconds = double;
-using lut_value_t = ra::si_pair;
+extern "C" PULONG InitSafeBootMode;
 
 struct {
     ra::settings args;
-    milliseconds tick_interval = 0; // set in DriverEntry
+    milliseconds tick_interval;
+    ra::vec2<ra::accel_invoker> invokers;
     ra::mouse_modifier modifier;
-    vec2<lut_value_t*> lookups = {};
-} global;
+} global = {};
 
 VOID
 RawaccelCallback(
@@ -62,50 +63,52 @@ Arguments:
         wcsncmp(devExt->dev_id, global.args.device_id, MAX_DEV_ID_LEN) == 0;
 
     if (any && rel_move && dev_match) {
-        // if IO is backed up to the point where we get more than 1 packet here
-        // then applying accel is pointless as we can't get an accurate timing
-        bool enable_accel = num_packets == 1;
+        auto mxcsr = _mm_getcsr();
+        _mm_setcsr(INITIAL_MXCSR | _MM_FLUSH_ZERO_ON);
+
+        double time;
+        if (global.args.time_min == global.args.time_max) {
+            time = global.args.time_min;
+        }
+        else {
+            counter_t now = KeQueryPerformanceCounter(NULL).QuadPart;
+            counter_t ticks = now - devExt->counter;
+            devExt->counter = now;
+            time = ticks * global.tick_interval / num_packets;
+            time = ra::clampsd(time, global.args.time_min, global.args.time_max);
+        }
 
         auto it = InputDataStart;
         do {
-            vec2d input = {
-                static_cast<double>(it->LastX),
-                static_cast<double>(it->LastY)
-            };
-
-            global.modifier.apply_rotation(input);
-            global.modifier.apply_angle_snap(input);
-
-            if (enable_accel) {
-                auto time_supplier = [=] {
-                    counter_t now = KeQueryPerformanceCounter(NULL).QuadPart;
-                    counter_t ticks = now - devExt->counter;
-                    devExt->counter = now;
-                    milliseconds time = ticks * global.tick_interval;
-                    return clampsd(time, global.args.time_min, 100);
+            if (it->LastX || it->LastY) {
+                ra::vec2d input = {
+                    static_cast<double>(it->LastX),
+                    static_cast<double>(it->LastY)
                 };
+               
+                global.modifier.modify(input, global.invokers, time);
 
-                global.modifier.apply_acceleration(input, time_supplier);
+                double carried_result_x = input.x + devExt->carry.x;
+                double carried_result_y = input.y + devExt->carry.y;
+
+                LONG out_x = static_cast<LONG>(carried_result_x);
+                LONG out_y = static_cast<LONG>(carried_result_y);
+
+                double carry_x = carried_result_x - out_x;
+                double carry_y = carried_result_y - out_y;
+
+                if (!ra::infnan(carry_x + carry_y)) {
+                    devExt->carry.x = carry_x;
+                    devExt->carry.y = carry_y;
+                    it->LastX = out_x;
+                    it->LastY = out_y;
+                }
             }
-
-            global.modifier.apply_sensitivity(input);
-
-            double carried_result_x = input.x + devExt->carry.x;
-            double carried_result_y = input.y + devExt->carry.y;
-
-            LONG out_x = static_cast<LONG>(carried_result_x);
-            LONG out_y = static_cast<LONG>(carried_result_y);
-
-            devExt->carry.x = carried_result_x - out_x;
-            devExt->carry.y = carried_result_y - out_y;
-
-            it->LastX = out_x;
-            it->LastY = out_y;
-
         } while (++it != InputDataEnd);
 
+        _mm_setcsr(mxcsr);
     }
-
+    
     (*(PSERVICE_CALLBACK_ROUTINE)devExt->UpperConnectData.ClassService)(
         devExt->UpperConnectData.ClassDeviceObject,
         InputDataStart,
@@ -157,10 +160,11 @@ Return Value:
     DebugPrint(("Ioctl received into filter control object.\n"));
 
     switch (IoControlCode) {
+        
     case RA_READ:
         status = WdfRequestRetrieveOutputBuffer(
             Request,
-            sizeof(ra::settings),
+            sizeof(ra::io_t),
             &buffer,
             NULL
         );
@@ -168,14 +172,18 @@ Return Value:
             DebugPrint(("RetrieveOutputBuffer failed: 0x%x\n", status));
         }
         else {
-            *reinterpret_cast<ra::settings*>(buffer) = global.args;
-            bytes_out = sizeof(ra::settings);
+            ra::io_t& output = *reinterpret_cast<ra::io_t*>(buffer);
+
+            output.args = global.args;
+            output.mod = global.modifier;
+
+            bytes_out = sizeof(ra::io_t);
         }
         break;
     case RA_WRITE:
         status = WdfRequestRetrieveInputBuffer(
             Request,
-            sizeof(ra::settings),
+            sizeof(ra::io_t),
             &buffer,
             NULL
         );
@@ -187,14 +195,11 @@ Return Value:
             interval.QuadPart = static_cast<LONGLONG>(ra::WRITE_DELAY) * -10000;
             KeDelayExecutionThread(KernelMode, FALSE, &interval);
 
-            ra::settings new_settings = *reinterpret_cast<ra::settings*>(buffer);
+            ra::io_t& input = *reinterpret_cast<ra::io_t*>(buffer);
 
-            if (new_settings.time_min <= 0 || _isnanf(static_cast<float>(new_settings.time_min))) {
-                new_settings.time_min = ra::settings{}.time_min;
-            }
-
-            global.args = new_settings;
-            global.modifier = { global.args, global.lookups };
+            global.args = input.args;
+            global.modifier = input.mod;
+            global.invokers = ra::invokers(input.args);
         }
         break;
     case RA_GET_VERSION:
@@ -212,6 +217,7 @@ Return Value:
             bytes_out = sizeof(ra::version_t);
         }
         break;
+        
     default:
         status = STATUS_INVALID_DEVICE_REQUEST;
         break;
@@ -271,23 +277,6 @@ Routine Description:
         LARGE_INTEGER freq;
         KeQueryPerformanceCounter(&freq);
         global.tick_interval = 1e3 / freq.QuadPart;
-
-        auto make_lut = [] {
-            const size_t POOL_SIZE = sizeof(lut_value_t) * ra::LUT_SIZE;
-
-            auto pool = ExAllocatePoolWithTag(NonPagedPool, POOL_SIZE, 'AR');
-
-            if (!pool) {
-                DebugPrint(("RA - failed to allocate LUT\n"));
-            }
-            else {
-                RtlZeroMemory(pool, POOL_SIZE);
-            }
-
-            return reinterpret_cast<lut_value_t*>(pool);
-        };
-
-        global.lookups = { make_lut(), make_lut() };
 
         CreateControlDevice(driver);
     }
@@ -459,6 +448,10 @@ Return Value:
     PAGED_CODE();
 
     DebugPrint(("Enter FilterEvtDeviceAdd \n"));
+
+    if (*InitSafeBootMode > 0) {
+        return STATUS_SUCCESS;
+    }
 
     //
     // Tell the framework that you are filter driver. Framework

@@ -19,7 +19,7 @@ namespace grapher
             RawAcceleration accelForm,
             AccelCalculator accelCalculator,
             AccelCharts accelCharts,
-            SettingsManager settings,
+            SettingsManager settingsManager,
             ApplyOptions applyOptions,
             Button writeButton,
             ButtonBase toggleButton,
@@ -32,44 +32,33 @@ namespace grapher
             AccelCharts = accelCharts;
             ApplyOptions = applyOptions;
             WriteButton = writeButton;
-            ToggleButton = (CheckBox)toggleButton;
+            DisableButton = (CheckBox)toggleButton;
             ScaleMenuItem = scaleMenuItem;
-            Settings = settings;
+            SM = settingsManager;
             DefaultButtonFont = WriteButton.Font;
             SmallButtonFont = new Font(WriteButton.Font.Name, WriteButton.Font.Size * Constants.SmallButtonSizeFactor);
             MouseWatcher = mouseWatcher;
+
             DeviceIDManager = deviceIDManager;
+            DeviceIDManager.DeviceIDsMenuItem.DropDownItemClicked += (s, e) =>
+            {
+                UpdateActiveSettingsFromFields();
+            };
 
-            ScaleMenuItem.Click += new System.EventHandler(OnScaleMenuItemClick);
-            WriteButton.Click += new System.EventHandler(OnWriteButtonClick);
-            ToggleButton.Click += new System.EventHandler(OnToggleButtonClick);
-            AccelForm.FormClosing += new FormClosingEventHandler(SaveGUISettingsOnClose);
+            ScaleMenuItem.Click += OnScaleMenuItemClick;
+            WriteButton.Click += OnWriteButtonClick;
+            DisableButton.Click += DisableDriverEventHandler;
+            AccelForm.FormClosing += SaveGUISettingsOnClose;
+            AccelForm.KeyDown += AccelForm_KeyDown;
 
-            ButtonTimerInterval = Convert.ToInt32(DriverInterop.WriteDelayMs);
+            ButtonTimerInterval = Convert.ToInt32(DriverSettings.WriteDelayMs);
             ButtonTimer = new Timer();
-            ButtonTimer.Tick += new System.EventHandler(OnButtonTimerTick);
+            ButtonTimer.Tick += OnButtonTimerTick;
 
             ChartRefresh = SetupChartTimer();
 
-            bool settingsActive = Settings.Startup();
-            SettingsNotDefault = !Settings.RawAccelSettings.IsDefaultEquivalent();
-
-            if (settingsActive)
-            {
-                LastToggleChecked = SettingsNotDefault;
-                ToggleButton.Enabled = LastToggleChecked;
-                RefreshOnRead(Settings.RawAccelSettings.AccelerationSettings);
-            }
-            else
-            {
-                DriverSettings active = DriverInterop.GetActiveSettings();
-                bool activeNotDefault = !RawAccelSettings.IsDefaultEquivalent(active);
-
-                LastToggleChecked = activeNotDefault;
-                ToggleButton.Enabled = SettingsNotDefault || activeNotDefault;
-                RefreshOnRead(active);
-            }
-
+            RefreshUser();
+            RefreshActive();
             SetupButtons();
 
             // TODO: The below removes an overlapping form from the anisotropy panel.
@@ -88,13 +77,13 @@ namespace grapher
 
         public AccelCharts AccelCharts { get; }
 
-        public SettingsManager Settings { get; }
+        public SettingsManager SM { get; }
 
         public ApplyOptions ApplyOptions { get; }
 
         public Button WriteButton { get; }
 
-        public CheckBox ToggleButton { get; }
+        public CheckBox DisableButton { get; }
 
         public Timer ButtonTimer { get; }
 
@@ -104,17 +93,11 @@ namespace grapher
 
         public DeviceIDManager DeviceIDManager { get; }
 
-        public Action UpdateInputManagers { get; private set; }
-
         private Timer ChartRefresh { get; }
 
         private Font SmallButtonFont { get; }
 
         private Font DefaultButtonFont { get; }
-
-        private bool SettingsNotDefault { get; set; }
-
-        private bool LastToggleChecked { get; set; }
 
         private int ButtonTimerInterval { get; }
 
@@ -124,48 +107,26 @@ namespace grapher
 
         private void SaveGUISettingsOnClose(Object sender, FormClosingEventArgs e)
         {
-            var guiSettings = Settings.MakeGUISettingsFromFields();
-            if (!Settings.RawAccelSettings.GUISettings.Equals(guiSettings))
+            var guiSettings = SM.MakeGUISettingsFromFields();
+
+            if (!SM.GuiSettings.Equals(guiSettings))
             {
-                Settings.RawAccelSettings.GUISettings = guiSettings;
-                Settings.RawAccelSettings.Save();
+                guiSettings.Save();
             }
         }
 
         public void UpdateActiveSettingsFromFields()
         {
-            var driverSettings = Settings.RawAccelSettings.AccelerationSettings;
-
-            var newArgs = ApplyOptions.GetArgs();
-            newArgs.x.speedCap = driverSettings.args.x.speedCap;
-            newArgs.y.speedCap = driverSettings.args.y.speedCap;
-
-            var settings = new DriverSettings
-            {
-                rotation = ApplyOptions.Rotation.Field.Data,
-                snap = driverSettings.snap,
-                sensitivity = new Vec2<double>
-                {
-                    x = ApplyOptions.Sensitivity.Fields.X,
-                    y = ApplyOptions.Sensitivity.Fields.Y
-                },
-                combineMagnitudes = ApplyOptions.IsWhole,
-                modes = ApplyOptions.GetModes(),
-                args = newArgs,
-                minimumTime = driverSettings.minimumTime,
-                directionalMultipliers = driverSettings.directionalMultipliers,
-                domainArgs = ApplyOptions.Directionality.GetDomainArgs(),
-                rangeXY = ApplyOptions.Directionality.GetRangeXY(),
-                deviceID = DeviceIDManager.ID,
-            };
+            var settings = ApplyOptions.MakeSettings();
+            settings.deviceID = DeviceIDManager.ID;
+            SM.SetHiddenOptions(settings);
 
             ButtonDelay(WriteButton);
-            SettingsErrors errors = Settings.TryUpdateActiveSettings(settings);
+
+            SettingsErrors errors = SM.TryActivate(settings);
             if (errors.Empty())
             {
-                SettingsNotDefault = !Settings.RawAccelSettings.IsDefaultEquivalent();
-                LastToggleChecked = SettingsNotDefault;
-                RefreshOnRead(Settings.RawAccelSettings.AccelerationSettings);
+                RefreshActive();
             }
             else
             {
@@ -173,25 +134,28 @@ namespace grapher
             }
         }
 
-        public void RefreshOnRead(DriverSettings args)
+        public void UpdateInputManagers()
         {
-            UpdateShownActiveValues(args);
-            UpdateGraph(args);
+            MouseWatcher.UpdateHandles(SM.ActiveSettings.deviceID);
+            DeviceIDManager.Update(SM.ActiveSettings.deviceID);
+        }
 
-            UpdateInputManagers = () =>
-            {
-                MouseWatcher.UpdateHandles(args.deviceID);
-                DeviceIDManager.Update(args.deviceID);
-            };
-
+        public void RefreshActive()
+        {
+            UpdateGraph();
             UpdateInputManagers();
         }
 
-        public void UpdateGraph(DriverSettings args)
+        public void RefreshUser()
+        {
+            UpdateShownActiveValues(SM.UserSettings);
+        }
+
+        public void UpdateGraph()
         {
             AccelCharts.Calculate(
-                Settings.ActiveAccel,
-                args);
+                SM.ActiveAccel,
+                SM.ActiveSettings);
             AccelCharts.Bind();
         }
 
@@ -207,7 +171,7 @@ namespace grapher
             Timer chartTimer = new Timer();
             chartTimer.Enabled = true;
             chartTimer.Interval = 10;
-            chartTimer.Tick += new System.EventHandler(OnChartTimerTick);
+            chartTimer.Tick += OnChartTimerTick;
             return chartTimer;
         }
 
@@ -215,32 +179,31 @@ namespace grapher
         {
             WriteButton.Top = Constants.SensitivityChartAloneHeight - Constants.ButtonVerticalOffset;
             
-            ToggleButton.Appearance = Appearance.Button;
-            ToggleButton.FlatStyle = FlatStyle.System;
-            ToggleButton.TextAlign = ContentAlignment.MiddleCenter;
-            ToggleButton.Size = WriteButton.Size;
-            ToggleButton.Top = WriteButton.Top;
+            DisableButton.Appearance = Appearance.Button;
+            DisableButton.FlatStyle = FlatStyle.System;
+            DisableButton.TextAlign = ContentAlignment.MiddleCenter;
+            DisableButton.Size = WriteButton.Size;
+            DisableButton.Top = WriteButton.Top;
 
             SetButtonDefaults();
         }
 
         private void SetButtonDefaults()
         {
-            ToggleButton.Checked = LastToggleChecked;
-
-            ToggleButton.Font = DefaultButtonFont;
-            ToggleButton.Text = ToggleButton.Checked ? "Disable" : "Enable";
-            ToggleButton.Update();
+            DisableButton.Font = DefaultButtonFont;
+            DisableButton.Text = "Disable";
+            DisableButton.Enabled = true;
+            DisableButton.Update();
 
             WriteButton.Font = DefaultButtonFont;
             WriteButton.Text = Constants.WriteButtonDefaultText;
-            WriteButton.Enabled = ToggleButton.Checked || !ToggleButton.Enabled;
+            WriteButton.Enabled = true;
             WriteButton.Update();
         }
 
         private void OnScaleMenuItemClick(object sender, EventArgs e)
         {
-            UpdateGraph(Settings.RawAccelSettings.AccelerationSettings);
+            UpdateGraph();
         }
 
         private void OnWriteButtonClick(object sender, EventArgs e)
@@ -248,25 +211,19 @@ namespace grapher
             UpdateActiveSettingsFromFields();
         }
 
-        private void OnToggleButtonClick(object sender, EventArgs e)
+        private void DisableDriverEventHandler(object sender, EventArgs e)
         {
-            var settings = ToggleButton.Checked ?
-                Settings.RawAccelSettings.AccelerationSettings :
-                DriverInterop.DefaultSettings;
-
-            LastToggleChecked = ToggleButton.Checked;
-            ButtonDelay(ToggleButton);
-
-            SettingsManager.SendToDriver(settings);
-            Settings.ActiveAccel.UpdateFromSettings(settings);
-            RefreshOnRead(settings);
+            ButtonDelay(DisableButton);
+            SM.DisableDriver();
+            RefreshActive();
         }
 
         private void OnButtonTimerTick(object sender, EventArgs e)
         {
             ButtonTimer.Stop();
-            ToggleButton.Enabled = SettingsNotDefault;
+            DeviceIDManager.DeviceIDsMenuItem.Enabled = true;
             SetButtonDefaults();
+            AccelForm.KeyDown += AccelForm_KeyDown;
         }
 
         private void StartButtonTimer()
@@ -277,18 +234,27 @@ namespace grapher
 
         private void ButtonDelay(ButtonBase btn)
         {
-            ToggleButton.Checked = false;
-
-            ToggleButton.Enabled = false;
-            WriteButton.Enabled = false;
+            AccelForm.KeyDown -= AccelForm_KeyDown;
 
             btn.Font = SmallButtonFont;
             btn.Text = $"{Constants.ButtonDelayText} : {ButtonTimerInterval} ms";
+            DisableButton.Enabled = false;
+            WriteButton.Enabled = false;
+            DeviceIDManager.DeviceIDsMenuItem.Enabled = false;
 
-            ToggleButton.Update();
+            DisableButton.Update();
             WriteButton.Update();
-
             StartButtonTimer();
+        }
+
+        private void AccelForm_KeyDown(object sender, KeyEventArgs e)
+        {
+            if (e.Control && e.KeyCode == Keys.Q)
+            {
+                DisableDriverEventHandler(sender, e);
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
         }
 
         private void OnChartTimerTick(object sender, EventArgs e)

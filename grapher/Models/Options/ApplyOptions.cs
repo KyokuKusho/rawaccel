@@ -81,46 +81,46 @@ namespace grapher.Models.Options
 
         #region Methods
 
-        public Vec2<AccelMode> GetModes()
+        public DriverSettings MakeSettings()
         {
-            var xMode = (AccelMode)OptionSetX.Options.AccelerationIndex;
-
-            return new Vec2<AccelMode>
+            var settings = new DriverSettings()
             {
-                x = xMode,
-                y = ByComponentVectorXYLock.Checked ? xMode : (AccelMode)OptionSetY.Options.AccelerationIndex
-            };
-        }
-
-        public Vec2<AccelArgs> GetArgs()
-        {
-            var xArgs = OptionSetX.GenerateArgs();
-            
-            return new Vec2<AccelArgs>
-            {
-                x = xArgs,
-                y = ByComponentVectorXYLock.Checked ? xArgs : OptionSetY.GenerateArgs()
+                rotation = Rotation.Field.Data,
+                sensitivity = new Vec2<double>
+                {
+                    x = Sensitivity.Fields.X,
+                    y = Sensitivity.Fields.Y
+                },
+                combineMagnitudes = IsWhole,
+                domainArgs = Directionality.GetDomainArgs(),
+                rangeXY = Directionality.GetRangeXY(),
             };
 
+            OptionSetX.SetArgs(ref settings.args.x);
+
+            var yArgSetter = ByComponentVectorXYLock.Checked ?
+                OptionSetX : OptionSetY;
+
+            yArgSetter.SetArgs(ref settings.args.y);
+
+            return settings;
         }
 
         public void SetActiveValues(
             double xSens,
             double ySens,
             double rotation,
-            int xMode,
-            int yMode,
             AccelArgs xArgs,
             AccelArgs yArgs,
             bool isWhole)
         {
             Sensitivity.SetActiveValues(xSens, ySens);
             Rotation.SetActiveValue(rotation);
-            OptionSetX.SetActiveValues(xMode, xArgs);
+            OptionSetX.SetActiveValues(xArgs);
             WholeVectorCheckBox.Checked = isWhole;
             ByComponentVectorCheckBox.Checked = !isWhole;
             ByComponentVectorXYLock.Checked = xArgs.Equals(yArgs);
-            OptionSetY.SetActiveValues(yMode, yArgs);
+            OptionSetY.SetActiveValues(yArgs);
         }
 
         public void SetActiveValues(DriverSettings settings)
@@ -129,8 +129,6 @@ namespace grapher.Models.Options
                 settings.sensitivity.x,
                 settings.sensitivity.y,
                 settings.rotation,
-                (int)settings.modes.x,
-                (int)settings.modes.y,
                 settings.args.x,
                 settings.args.y,
                 settings.combineMagnitudes);

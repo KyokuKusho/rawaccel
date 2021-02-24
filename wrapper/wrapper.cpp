@@ -1,17 +1,21 @@
 #pragma once
 
-#include <algorithm>
-#include <type_traits>
-#include <msclr\marshal_cppstd.h>
-
-#include <rawaccel.hpp>
-#include <rawaccel-version.h>
 #include <utility-rawinput.hpp>
+#include <rawaccel-io.hpp>
+#include <rawaccel-version.h>
+#include <rawaccel-validate.hpp>
+#include <rawaccel-error.hpp>
 
-#include "wrapper_io.hpp"
+#include <algorithm>
+#include <cstdio>
+#include <memory>
+#include <type_traits>
+
+#include <msclr\marshal_cppstd.h>
 
 using namespace System;
 using namespace System::Collections::Generic;
+using namespace System::IO;
 using namespace System::Runtime::InteropServices;
 using namespace System::Reflection;
 
@@ -19,34 +23,54 @@ using namespace Windows::Forms;
 
 using namespace Newtonsoft::Json;
 
+namespace ra = rawaccel;
+
+ra::settings default_settings; // effectively const for the gui
+
+#pragma managed(push, off)
+
+static UINT msg_changed() 
+{
+    static UINT msg = RegisterWindowMessageW(L"rawaccel-settings-change");
+    return msg;
+}
+
+#pragma managed(pop)
+
+public ref struct Notifications
+{
+    static initonly int SettingsChanged = msg_changed();
+};
+
 [JsonConverter(Converters::StringEnumConverter::typeid)]
 public enum class AccelMode
 {
-    linear, classic, natural, naturalgain, power, motivity, noaccel
+    jump, uncapped, classic, natural, power, motivity, noaccel
 };
 
-[JsonObject(ItemRequired = Required::Always)]
-[StructLayout(LayoutKind::Sequential)]
-public value struct AccelArgs
+public enum class TableMode 
 {
-    double offset;
+    off, binlog, linear
+};
+
+[StructLayout(LayoutKind::Sequential)]
+public value struct TableArgs
+{
+    [JsonIgnore]
+    TableMode mode;
+
     [MarshalAs(UnmanagedType::U1)]
-    bool legacyOffset;
-    double acceleration;
-    double scale;
-    double limit;
-    double exponent;
-    double midpoint;
-    double weight;
-    [JsonProperty("legacyCap")]
-    double scaleCap;
-    double gainCap;
-    [JsonProperty(Required = Required::Default)]
-    double speedCap;
+    bool transfer;
+
+    [MarshalAs(UnmanagedType::U1)]
+    unsigned char partitions;
+
+    short numElements;
+    double start;
+    double stop;
 };
 
 generic <typename T>
-[JsonObject(ItemRequired = Required::Always)]
 [StructLayout(LayoutKind::Sequential)]
 public value struct Vec2
 {
@@ -54,7 +78,31 @@ public value struct Vec2
     T y;
 };
 
-[JsonObject(ItemRequired = Required::Always)]
+[StructLayout(LayoutKind::Sequential)]
+public value struct AccelArgs
+{
+    AccelMode mode;
+
+    [MarshalAs(UnmanagedType::U1)]
+    bool gain;
+
+    [JsonProperty(Required = Required::Default)]
+    TableArgs lutArgs;
+
+    double offset;
+    double accelUncapped;
+    double accelNatural;
+    double accelMotivity;
+    double motivity;
+    double power;
+    double scale;
+    double exponent;
+    double limit;
+    double midpoint;
+    [JsonProperty("cap / jump")]
+    Vec2<double> cap;
+};
+
 [StructLayout(LayoutKind::Sequential)]
 public value struct DomainArgs
 {
@@ -66,7 +114,8 @@ public value struct DomainArgs
 [StructLayout(LayoutKind::Sequential, CharSet = CharSet::Unicode)]
 public ref struct DriverSettings
 {
-    literal String^ Key = "Driver settings";
+    literal double WriteDelayMs = ra::WRITE_DELAY;
+    literal String^ DefaultPath = "settings.json";
 
     [JsonProperty("Degrees of rotation")]
     double rotation;
@@ -78,8 +127,9 @@ public ref struct DriverSettings
     [MarshalAs(UnmanagedType::U1)]
     bool combineMagnitudes;
 
-    [JsonProperty("Accel modes")]
-    Vec2<AccelMode> modes;
+    double dpi;
+
+    double speedCap;
 
     [JsonProperty("Accel parameters")]
     Vec2<AccelArgs> args;
@@ -87,192 +137,156 @@ public ref struct DriverSettings
     [JsonProperty("Sensitivity multipliers")]
     Vec2<double> sensitivity;
 
-    [JsonProperty("Negative directional multipliers", Required = Required::Default)]
+    [JsonProperty("Negative directional multipliers")]
     Vec2<double> directionalMultipliers;
 
-    [JsonProperty("Stretches domain for horizontal vs vertical inputs", Required = Required::Default)]
+    [JsonProperty("Stretches domain for horizontal vs vertical inputs")]
     DomainArgs domainArgs;
 
-    [JsonProperty("Stretches accel range for horizontal vs vertical inputs", Required = Required::Default)]
+    [JsonProperty("Stretches accel range for horizontal vs vertical inputs")]
     Vec2<double> rangeXY;
 
     [JsonProperty(Required = Required::Default)]
     double minimumTime;
+    [JsonProperty(Required = Required::Default)]
+    double maximumTime;
 
     [JsonProperty("Device ID", Required = Required::Default)]
-    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = MAX_DEV_ID_LEN)]
+    [MarshalAs(UnmanagedType::ByValTStr, SizeConst = ra::MAX_DEV_ID_LEN)]
     String^ deviceID = "";
 
     bool ShouldSerializeminimumTime() 
     { 
-        return minimumTime > 0 && minimumTime != DEFAULT_TIME_MIN;
+        return minimumTime != ra::DEFAULT_TIME_MIN;
+    }
+
+    bool ShouldSerializemaximumTime()
+    {
+        return maximumTime != ra::DEFAULT_TIME_MAX;
     }
 
     DriverSettings() 
     {
-        domainArgs = { { 1, 1 }, 2 };
-        rangeXY = { 1, 1 };
+        Marshal::PtrToStructure(IntPtr(&default_settings), this);
     }
+
+    static property DriverSettings^ Default
+    {
+        DriverSettings^ get()
+        {
+            return gcnew DriverSettings();
+        }    
+    }
+
+    bool IsDefaultEquivalent()
+    {
+        return String::IsNullOrEmpty(deviceID) &&
+            sensitivity.x == 1 &&
+            sensitivity.y == 1 &&
+            directionalMultipliers.x <= 0 &&
+            directionalMultipliers.y <= 0 &&
+            rotation == 0 &&
+            snap == 0 &&
+            args.x.lutArgs.mode == TableMode::off &&
+            args.y.lutArgs.mode == TableMode::off &&
+            args.x.mode == AccelMode::noaccel &&
+            (combineMagnitudes || args.y.mode == AccelMode::noaccel);
+    }
+
+    void ToFile(String^ path)
+    {
+        using namespace Newtonsoft::Json::Linq;
+
+        JObject^ thisJO = JObject::FromObject(this);
+        String^ modes = String::Join(" | ", Enum::GetNames(AccelMode::typeid));
+        thisJO->AddFirst(gcnew JProperty("### Mode Types ###", modes));
+        File::WriteAllText(path, thisJO->ToString(Formatting::Indented));
+    }
+
+    static DriverSettings^ FromFile(String^ path)
+    {
+        if (!File::Exists(path))
+        {
+            throw gcnew FileNotFoundException(
+                String::Format("Settings file not found at {0}", path));
+        }
+
+        auto settings = JsonConvert::DeserializeObject<DriverSettings^>(
+            File::ReadAllText(path));
+
+        if (settings == nullptr) {
+             throw gcnew JsonException(String::Format("{0} contains invalid JSON", path));
+        }
+
+        return settings;
+    }
+
 };
 
-
-template <typename NativeSettingsFunc>
-void as_native(DriverSettings^ managed_args, NativeSettingsFunc fn)
-{
-#ifndef NDEBUG
-    if (Marshal::SizeOf(managed_args) != sizeof(settings))
-        throw gcnew InvalidOperationException("setting sizes differ");
-#endif
-    settings args;
-    Marshal::StructureToPtr(managed_args, (IntPtr)&args, false);
-    fn(args);
-    if constexpr (!std::is_invocable_v<NativeSettingsFunc, const settings&>) {
-        Marshal::PtrToStructure((IntPtr)&args, managed_args);
-    }
-}
-
-DriverSettings^ get_default()
-{
-    DriverSettings^ managed = gcnew DriverSettings();
-    as_native(managed, [](settings& args) {
-        args = {};
-    });
-    return managed;
-}
-
-void set_active(DriverSettings^ managed)
-{
-    as_native(managed, [](const settings& args) {
-        wrapper_io::writeToDriver(args);
-    });
-}
-
-DriverSettings^ get_active()
-{
-    DriverSettings^ managed = gcnew DriverSettings();
-    as_native(managed, [](settings& args) {
-        wrapper_io::readFromDriver(args);
-    });
-    return managed;
-}
-
-void update_modifier(mouse_modifier& mod, DriverSettings^ managed, vec2<si_pair*> luts = {})
-{
-    as_native(managed, [&](const settings& args) {
-        mod = { args, luts };
-    });
-}
-
-using error_list_t = Collections::Generic::List<String^>;
-
-error_list_t^ get_accel_errors(AccelMode mode, AccelArgs^ args)
-{
-    accel_mode mode_native = (accel_mode)mode;
-
-    auto is_mode = [mode_native](auto... modes) {
-        return ((mode_native == modes) || ...);
-    };
-    
-    using am = accel_mode;
-
-    auto error_list = gcnew error_list_t();
-    
-    if (args->acceleration > 10 && is_mode(am::natural, am::naturalgain))
-        error_list->Add("acceleration can not be greater than 10");
-    else if (args->acceleration == 0 && is_mode(am::naturalgain))
-        error_list->Add("acceleration must be positive");
-    else if (args->acceleration < 0) {
-        bool additive = mode_native < am::power;
-        if (additive) error_list->Add("acceleration can not be negative, use a negative weight to compensate");
-        else error_list->Add("acceleration can not be negative");
-    }
-        
-    if (args->scale <= 0)
-        error_list->Add("scale must be positive");
-
-    if (args->exponent <= 1 && is_mode(am::classic))
-        error_list->Add("exponent must be greater than 1");
-    else if (args->exponent <= 0)
-        error_list->Add("exponent must be positive");
-
-    if (args->limit <= 1)
-        error_list->Add("limit must be greater than 1");
-
-    if (args->midpoint <= 0)
-        error_list->Add("midpoint must be positive");
-
-    if (args->offset < 0)
-        error_list->Add("offset can not be negative");
-
-    return error_list;
-}
-
-error_list_t^ get_other_errors(DriverSettings^ settings)
-{
-    auto error_list = gcnew error_list_t();
-
-    if (settings->rangeXY.x <= 0 || settings->rangeXY.y <= 0)
-    {
-        error_list->Add("range values must be positive");
-    }
-
-    if (settings->domainArgs.domainXY.x <= 0 || settings->domainArgs.domainXY.y <= 0)
-    {
-        error_list->Add("domain values must be positive");
-    }
-
-    if (settings->domainArgs.lpNorm <= 0)
-    {
-        error_list->Add("lp norm must be positive");
-    }
-    
-    return error_list;
-}
+public ref struct InteropException : public Exception {
+public:
+    InteropException(String^ what) :
+        Exception(what) {}
+    InteropException(const char* what) :
+        Exception(gcnew String(what)) {}
+    InteropException(const std::exception& e) :
+        InteropException(e.what()) {}
+};
 
 public ref class SettingsErrors
 {
 public:
-    error_list_t^ x;
-    error_list_t^ y;
-    error_list_t^ other;
+    List<String^>^ list;
+    int lastX;
+    int lastY;
+
+    delegate void MsgHandler(const char*);
+
+    void Add(const char* msg)
+    {
+        list->Add(msclr::interop::marshal_as<String^>(msg));
+    }
+
+    SettingsErrors(DriverSettings^ settings) 
+    {
+        MsgHandler^ del = gcnew MsgHandler(this, &SettingsErrors::Add);
+        GCHandle gch = GCHandle::Alloc(del);
+        IntPtr ip = Marshal::GetFunctionPointerForDelegate(del);
+        auto fp = static_cast<void (*)(const char*)>(ip.ToPointer());
+
+        ra::settings args;
+        Marshal::StructureToPtr(settings, (IntPtr)&args, false);
+
+        list = gcnew List<String^>();
+        auto [lx, ly, _] = ra::valid(args, fp);
+        lastX = lx;
+        lastY = ly;
+
+        gch.Free();
+    }
 
     bool Empty()
     {
-        return (x == nullptr || x->Count == 0) && 
-            (y == nullptr || y->Count == 0) &&
-            (other == nullptr || other->Count == 0);
+        return list->Count == 0;
     }
 
     virtual String^ ToString() override 
     {
-        if (x == nullptr) throw;
-
         Text::StringBuilder^ sb = gcnew Text::StringBuilder();
 
-        if (y == nullptr) // assume combineMagnitudes
+        for each (auto s in list->GetRange(0, lastX))
         {
-            for each (String^ str in x)
-            {
-                sb->AppendLine(str);
-            }
+            sb->AppendFormat("x: {0}\n", s);
         }
-        else
+        for each (auto s in list->GetRange(lastX, lastY - lastX))
         {
-            for each (String^ str in x)
-            {
-                sb->AppendFormat("x: {0}\n", str);
-            }
-            for each (String^ str in y)
-            {
-                sb->AppendFormat("y: {0}\n", str);
-            }
+            sb->AppendFormat("y: {0}\n", s);
+        }
+        for each (auto s in list->GetRange(lastY, list->Count - lastY)) 
+        {
+            sb->AppendLine(s);
         }
 
-        for each (String ^ str in other)
-        {
-			sb->AppendLine(str);
-        }
-        
         return sb->ToString();
     }
 };
@@ -314,7 +328,7 @@ public ref struct RawInputInterop
         }
         catch (const std::exception& e)
         {
-            throw gcnew System::Exception(gcnew String(e.what()));
+            throw gcnew InteropException(e);
         }
     }
 
@@ -336,172 +350,326 @@ public ref struct RawInputInterop
         }
         catch (const std::exception& e)
         {
-            throw gcnew System::Exception(gcnew String(e.what()));
+            throw gcnew InteropException(e);
         }
     }
 
-};
-
-public ref struct DriverInterop
-{
-    literal double WriteDelayMs = WRITE_DELAY;
-    static initonly DriverSettings^ DefaultSettings = get_default();
-
-    static DriverSettings^ GetActiveSettings()
-    {
-        return get_active();
-    }
-
-    static void Write(DriverSettings^ args)
-    {
-        set_active(args);
-    }
-
-    static DriverSettings^ GetDefaultSettings()
-    {
-        return get_default();
-    }
-
-    static SettingsErrors^ GetSettingsErrors(DriverSettings^ args)
-    {
-        auto errors = gcnew SettingsErrors();
-
-        errors->x = get_accel_errors(args->modes.x, args->args.x);
-
-        if (!args->combineMagnitudes) {
-            errors->y = get_accel_errors(args->modes.y, args->args.y);
-        }
-
-        errors->other = get_other_errors(args);
-
-        return errors;
-    }
-
-
-
-    static error_list_t^ GetAccelErrors(AccelMode mode, AccelArgs^ args)
-    {
-        return get_accel_errors(mode, args);
-    }
 };
 
 public ref class ManagedAccel
 {
-    mouse_modifier* const modifier_instance = new mouse_modifier();
-#ifdef RA_LOOKUP
-    si_pair* const lut_x = new si_pair[LUT_SIZE];
-    si_pair* const lut_y = new si_pair[LUT_SIZE];
-#else
-    si_pair* lut_x = nullptr;
-    si_pair* lut_y = nullptr;
-#endif
+    ra::io_t* const instance = new ra::io_t();
+
+    ra::vec2<ra::accel_invoker>* const invokers = 
+        new ra::vec2<ra::accel_invoker>();
 
 public:
 
     virtual ~ManagedAccel()
     {
-        delete modifier_instance;
-        delete[] lut_x;
-        delete[] lut_y;
+        delete instance;
+        delete invokers;
     }
 
     !ManagedAccel()
     {
-        delete modifier_instance;
-        delete[] lut_x;
-        delete[] lut_y;
+        delete instance;
+        delete invokers;
     }
 
     Tuple<double, double>^ Accelerate(int x, int y, double time)
     {
-        vec2d in_out_vec = {
+        ra::vec2d in_out_vec = {
             (double)x,
             (double)y
         };
-        modifier_instance->modify(in_out_vec, time);
+
+        instance->mod.modify(in_out_vec, *invokers, time);
 
         return gcnew Tuple<double, double>(in_out_vec.x, in_out_vec.y);
     }
 
-    void UpdateFromSettings(DriverSettings^ args)
+    void SetInvokers()
     {
-        update_modifier(
-            *modifier_instance, 
-            args, 
-            vec2<si_pair*>{ lut_x, lut_y }
-        );
+        *invokers = ra::invokers(instance->args);
     }
 
-    static ManagedAccel^ GetActiveAccel()
+    void Activate()
     {
-        settings args;
-        wrapper_io::readFromDriver(args);
+        try {
+            ra::write(*instance);
+        }
+        catch (const ra::error& e) {
+            throw gcnew InteropException(e);
+        }
+    }
 
+    property DriverSettings^ Settings
+    {
+        DriverSettings^ get()
+        {
+            DriverSettings^ settings = gcnew DriverSettings();
+            Marshal::PtrToStructure(IntPtr(&instance->args), settings);
+            return settings;
+        }
+
+        void set(DriverSettings^ val)
+        {
+            Marshal::StructureToPtr(val, IntPtr(&instance->args), false);
+            instance->mod = { instance->args };
+            SetInvokers();
+        }
+
+    }
+
+    static ManagedAccel^ GetActive()
+    {
         auto active = gcnew ManagedAccel();
-        *active->modifier_instance = { 
-            args
-            , vec2<si_pair*> { active->lut_x, active->lut_y }
-        };
+        try {
+            ra::read(*active->instance);
+            active->SetInvokers();
+        }
+        catch (const ra::error& e) {
+            throw gcnew InteropException(e);
+        }
+
         return active;
     }
-};
 
-public ref struct RawAccelVersion
-{
-    literal String^ value = RA_VER_STRING;
+    static void Send(DriverSettings^ settings) 
+    {
+        ManagedAccel^ accel = gcnew ManagedAccel();
+        Marshal::StructureToPtr(settings, IntPtr(&accel->instance->args), false);
+        accel->instance->mod = { accel->instance->args };
+        accel->Activate();
+    }
 };
-
-public ref struct VersionException : public Exception 
-{
-public:
-    VersionException() {}
-    VersionException(String^ what) : Exception(what) {}
-};
-
-Version^ convert(rawaccel::version_t v)
-{
-    return gcnew Version(v.major, v.minor, v.patch, 0);
-}
 
 public ref struct VersionHelper
 {
+    literal String^ VersionString = RA_VER_STRING;
 
-    static Version^ ValidateAndGetDriverVersion(Version^ wrapperTarget)
+    static Version^ WrapperVersion()
     {
-        Version^ wrapperActual = VersionHelper::typeid->Assembly->GetName()->Version;
-
-        if (wrapperTarget != wrapperActual) {
-            throw gcnew VersionException("version mismatch, expected wrapper.dll v" + wrapperActual);
-        }
-
-        version_t drv_ver;
-
-        try {
-            wrapper_io::getDriverVersion(drv_ver);
-        }
-        catch (DriverNotInstalledException^ ex) {
-            throw gcnew VersionException(ex->Message);
-        }
-        catch (DriverIOException^) {
-            // Assume version ioctl is unimplemented (driver version < v1.3.0)
-            throw gcnew VersionException("driver version is out of date\n\nrun installer.exe to reinstall");
-        }
-
-        Version^ drv_ver_managed = convert(drv_ver);
-
-        if (drv_ver_managed < convert(min_driver_version)) {
-            throw gcnew VersionException(
-                String::Format("driver version is out of date (v{0})\n\nrun installer.exe to reinstall", 
-                    drv_ver_managed));
-        }
-        else if (drv_ver_managed > wrapperActual) {
-            throw gcnew VersionException(
-                String::Format("newer driver version is installed (v{0})",
-                    drv_ver_managed));
-        }
-        else {
-            return drv_ver_managed;
-        }
+        return VersionHelper::typeid->Assembly->GetName()->Version;
     }
 
+    static Version^ CheckDriverVersion()
+    {
+        ra::version_t v;
+
+        try {
+            v = ra::check_version();
+        }
+        catch (const ra::error& e) {
+            throw gcnew InteropException(e);
+        }
+
+        return gcnew Version(v.major, v.minor, v.patch, 0);
+    }
 };
+
+#pragma managed(push, off)
+
+using fill_callback_t = double (*)(double);
+
+struct fill_args_t {
+    fill_callback_t cb = nullptr;
+    ra::table_args args = {};
+};
+
+static int fill_luts(const fill_args_t* fx, 
+                     const fill_args_t* fy = nullptr,
+                     bool by_component = false)
+{
+    ra::check_version(); 
+
+    auto io_ptr = std::make_unique<ra::io_t>();
+    auto& settings = io_ptr->args;
+    settings = default_settings;
+
+    settings.argsv.x.lut_args = fx->args;
+
+    settings.combine_mags = fy == nullptr;
+
+    if (fy) {
+        settings.argsv.y.lut_args = fy->args;
+    }
+    else if (by_component) {
+        settings.domain_args.lp_norm = ra::domain_args::max_norm;
+    }
+
+    auto valid = ra::valid(io_ptr->args, [](auto msg) {
+        printf("%s\n", msg);
+    });
+
+    if (!valid) return 1;
+
+    io_ptr->mod = { settings };
+
+    auto fill = [](auto* fill_args, ra::accel_union& u) {
+        switch (fill_args->args.mode) {
+        case ra::table_mode::binlog:
+            u.binlog_lut.fill(fill_args->cb);
+            break;
+        case ra::table_mode::linear:
+            u.linear_lut.fill(fill_args->cb);
+            break;
+        default:
+            throw ra::error("unsupported mode");
+        }
+    };
+
+    fill(fx, io_ptr->mod.accel.x);
+    if (fy) fill(fy, io_ptr->mod.accel.y);
+    ra::write(*io_ptr);
+    SendNotifyMessageW(HWND_BROADCAST, msg_changed(), 0, 0);
+    return 0;
+}
+
+#define API __declspec(dllexport)
+
+extern "C" {
+
+API
+int fill(fill_callback_t cb,
+         ra::table_mode mode,
+         double start,
+         double stop,
+         int num,
+         bool transfer,
+         bool by_component)
+{
+    if (num > ra::LUT_CAPACITY) {
+        puts("num is too large\n");
+        return 1;
+    }
+    else if (num <= 0) {
+        puts("num must be positive");
+        return 1;
+    }
+
+    fill_args_t fill_args;
+
+    fill_args.cb = cb;
+    fill_args.args = {
+        mode, transfer, 1, static_cast<short>(num), start, stop 
+    };
+    
+    try {
+        return fill_luts(&fill_args, nullptr, by_component);
+    }
+    catch (const std::exception& e) {
+        printf("%s\n", e.what());
+        return 1;
+    }
+}
+
+API
+int fill_xy(fill_callback_t cb_x, 
+            ra::table_mode mode_x, 
+            double start_x, 
+            double stop_x, 
+            int num_x, 
+            bool transfer_x,
+
+            fill_callback_t cb_y,
+            ra::table_mode mode_y,
+            double start_y,
+            double stop_y,
+            int num_y,
+            bool transfer_y)
+{
+    if (num_x > ra::LUT_CAPACITY || num_y > ra::LUT_CAPACITY) {
+        puts("num is too large\n");
+        return 1;
+    }
+    else if (num_x <= 0 || num_y <= 0) {
+        puts("num must be positive");
+        return 1;
+    }
+
+    ra::vec2<fill_args_t> fill_args;
+
+    fill_args.x.cb = cb_x;
+    fill_args.x.args = {
+        mode_x, transfer_x, 1, static_cast<short>(num_x), start_x, stop_x
+    };
+
+    fill_args.y.cb = cb_y;
+    fill_args.y.args = {
+        mode_y, transfer_y, 1, static_cast<short>(num_y), start_y, stop_y
+    };
+
+    try {
+        return fill_luts(&fill_args.x, &fill_args.y);
+    }
+    catch (const std::exception& e) {
+        printf("%s\n", e.what());
+        return 1;
+    }
+}
+
+API
+int set_rotation(double deg) {
+    default_settings.degrees_rotation = deg;
+    return 0;
+}
+
+API
+int set_snap(double deg) {
+    default_settings.degrees_snap = deg;
+    return 0;
+}
+
+API
+int set_dpi(double dpi) {
+    default_settings.dpi = dpi;
+    return 0;
+}
+
+API
+int set_sens(double x, double y) {
+    default_settings.sens = { x, y };
+    return 0;
+}
+
+API
+int set_domain_args(double x, double y, double lp_norm) {
+    default_settings.domain_args = { { x, y }, lp_norm };
+    return 0;
+}
+
+API
+int set_range_args(double x, double y) {
+    default_settings.range_weights = { x, y };
+    return 0;
+}
+
+API
+int set_time_clamp(double lo, double hi) {
+    default_settings.time_min = lo;
+    default_settings.time_max = hi;
+    return 0;
+}
+
+API
+int set_dir_mults(double x, double y) {
+    default_settings.dir_multipliers = { x, y };
+    return 0;
+}
+
+API
+int set_speed_cap(double x) {
+    default_settings.input_speed_cap = x;
+    return 0;
+}
+
+API
+int set_device_id(const wchar_t* id) {
+    return wcsncpy_s(default_settings.device_id, id, ra::MAX_DEV_ID_LEN);
+}
+
+} // extern C
+
+#pragma managed(pop)

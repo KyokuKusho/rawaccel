@@ -1,5 +1,6 @@
 ﻿using Newtonsoft.Json;
 using System;
+using System.IO;
 
 namespace grapher.Models.Serialized
 {
@@ -7,6 +8,8 @@ namespace grapher.Models.Serialized
     [JsonObject(ItemRequired = Required.Always)]
     public class GUISettings
     {
+        public const string Path = ".gui-config";
+
         #region Constructors
 
         public GUISettings() {}
@@ -29,7 +32,12 @@ namespace grapher.Models.Serialized
         public bool ShowVelocityAndGain { get; set; }
 
         [JsonProperty(Order = 5)]
-        public bool AutoWriteToDriverOnStartup { get; set; }
+        public bool ActivateOnLogin { get; set; } // todo
+
+        public bool ActivateOnLoad { get; set; }
+
+        public string LoadPath { get; set; }
+
 
         #endregion Properties
 
@@ -53,7 +61,7 @@ namespace grapher.Models.Serialized
                 PollRate == other.PollRate &&
                 ShowLastMouseMove == other.ShowLastMouseMove &&
                 ShowVelocityAndGain == other.ShowVelocityAndGain &&
-                AutoWriteToDriverOnStartup == other.AutoWriteToDriverOnStartup;
+                ActivateOnLoad == other.ActivateOnLoad;
         }
 
         public override int GetHashCode()
@@ -62,7 +70,32 @@ namespace grapher.Models.Serialized
                 PollRate.GetHashCode() ^
                 ShowLastMouseMove.GetHashCode() ^
                 ShowVelocityAndGain.GetHashCode() ^
-                AutoWriteToDriverOnStartup.GetHashCode();
+                ActivateOnLoad.GetHashCode();
+        }
+
+        public void Save()
+        {
+            File.WriteAllText(Path, JsonConvert.SerializeObject(this, Formatting.Indented));
+        }
+
+        public static GUISettings MaybeLoad()
+        {
+            GUISettings settings = null;
+
+            try
+            {
+                settings = JsonConvert.DeserializeObject<GUISettings>(
+                    File.ReadAllText(Path));
+            }
+            catch (Exception ex)
+            {
+                if (!(ex is JsonException || ex is FileNotFoundException))
+                {
+                    throw;
+                }
+            }
+
+            return settings;
         }
 
         #endregion Methods

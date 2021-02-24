@@ -47,25 +47,14 @@ namespace grapher
         public double SensitivityCap { 
             get
             {
-                if (IsSensitivityGain)
-                {
                     return CapOption.Field.Data;
-                }
-                else
-                {
-                    return 0;
-                }
             }
         }
 
         public double VelocityGainCap { 
             get
             {
-                if (IsSensitivityGain)
-                {
-                    return 0;
-                }
-                else
+
                 {
                     return CapOption.Field.Data;
                 }

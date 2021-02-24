@@ -1,35 +1,40 @@
 #pragma once
 
+#include "rawaccel-base.hpp"
+
 #include <math.h>
 
-#include "accel-base.hpp"
-
 namespace rawaccel {
-
-	/// <summary> Struct to hold "natural" (vanishing difference) acceleration implementation. </summary>
-	struct natural_impl {
-		double rate;
+		
+	struct accel_natural : negatable {
 		double limit;
-		double offset;
+		double accel;
 
-		natural_impl(const accel_args& args) :
-			rate(args.accel), limit(args.limit - 1), offset(args.offset)
+		double operator()(double x) const
 		{
-			rate /= limit;
+			return limit * (1 - exp(accel * x));
 		}
 
-		inline double operator()(double speed) const {
-			// f(x) = k(1-e^(-mx))
-			double base_speed = speed + offset;
-			return limit * (1 - ((exp(-rate * speed) * speed + offset) / base_speed));
-		}
-
-		inline double legacy_offset(double speed) const {
-			return limit - (limit * exp(-rate * speed));
-		}
-
+		accel_natural(const accel_args& args) :
+			negatable(args.offset, args.limit),
+			limit(fabs(args.limit - 1)),
+			accel(-args.accel_natural / limit) {}
 	};
 
-	using accel_natural = additive_accel<natural_impl>;
+
+	struct accel_natural_gain : accel_natural {
+		double constant;
+		
+		static constexpr bool is_transfer_type = 1;
+
+		double operator()(double x) const
+		{
+			return limit * (x - exp(accel * x) / accel) + constant;
+		}
+
+		accel_natural_gain(const accel_args& args) :
+			accel_natural(args),
+			constant(limit / accel) {}
+	};
 
 }

@@ -2,18 +2,18 @@
 
 namespace grapher.Layouts
 {
-    public class NaturalLayout : LayoutBase
+    public class UncappedLayout : LayoutBase
     {
-        public NaturalLayout()
+        public UncappedLayout()
             : base()
         {
-            Name = "Natural";
-            Index = (int)AccelMode.natural;
+            Name = "Uncapped";
+            Index = (int)AccelMode.uncapped;
             LogarithmicCharts = false;
 
             AccelLayout = new OptionLayout(true, Acceleration);
             OffsetLayout = new OptionLayout(true, Offset);
-            LimitLayout = new OptionLayout(true, Limit);
+            ExponentLayout = new OptionLayout(true, Exponent);
         }
     }
 }

@@ -18,7 +18,7 @@ namespace grapher.Models.Devices
             DeviceIDMenuItem = new ToolStripMenuItem();
             DeviceIDMenuItem.Checked = false;
             DeviceIDMenuItem.Text = MenuItemText();
-            DeviceIDMenuItem.Click += OnClicked;
+            DeviceIDMenuItem.Tag = this;
             manager.DeviceIDsMenuItem.DropDownItems.Add(DeviceIDMenuItem);
         }
 
@@ -48,11 +48,6 @@ namespace grapher.Models.Devices
         {
             DeviceIDMenuItem.ForeColor = Color.DarkGray;
             DeviceIDMenuItem.Text = DisconnectedText();
-        }
-
-        public void OnClicked(object sender, EventArgs e)
-        {
-            Manager.SetActive(this);
         }
 
         public override bool Equals(object obj)
