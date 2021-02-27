@@ -48,17 +48,7 @@ namespace rawaccel {
 			exponent(args.exponent) {}
 	};
 
-	// just here for consistency
-	struct accel_power_gain : accel_power {
-
-		using accel_power::operator();
-
-		accel_power_gain(const accel_args& args) :
-			accel_power(args)
-		{
-			scale /= exponent + 1;
-		}
-	};
+	using accel_power_gain = accel_power;
 
 	struct accel_uncapped : additive {
 		double power;
