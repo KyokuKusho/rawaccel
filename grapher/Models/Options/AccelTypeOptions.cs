@@ -209,11 +209,16 @@ namespace grapher
                 default: break;
             }
 
+            switch (args.mode)
+            {
+                case AccelMode.natural: Limit.SetActiveValue(args.limit); break;
+                case AccelMode.motivity: Limit.SetActiveValue(args.motivity); break;
+            }
+
             CapX.SetActiveValue(args.cap.x);
             Cap.SetActiveValues(args.cap.y, args.cap.y, true);
             Offset.SetActiveValue(args.offset, !args.gain);
             Scale.SetActiveValue(args.scale);
-            Limit.SetActiveValue(args.limit);
             Midpoint.SetActiveValue(args.midpoint);
         }
 
@@ -266,8 +271,18 @@ namespace grapher
                     case AccelMode.power: args.exponent = exponent; break;
                     default: throw new NotImplementedException();
                 }
-
             }
+
+            if (Limit.Visible)
+            {
+                double val = Limit.Field.Data;
+                switch (args.mode)
+                {
+                    case AccelMode.natural: args.limit = val; break;
+                    case AccelMode.motivity: args.motivity = val; break;
+                }
+            }
+
             if (Scale.Visible) args.scale = Scale.Field.Data;
             if (Cap.Visible) args.cap.y = Cap.SensitivityCap;
             if (CapX.Visible) args.cap.x = CapX.Field.Data;
