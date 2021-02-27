@@ -73,7 +73,7 @@ namespace rawaccel {
 	struct accel_linear_lut : lut_base<accel_linear_lut> {
 		linear_range range;
 		bool transfer = false;
-		value_t data[capacity] = { 1 };
+		value_t data[capacity] = {};
 
 		double operator()(double x) const
 		{
@@ -111,7 +111,7 @@ namespace rawaccel {
 		fp_rep_range range;
 		double x_start;
 		bool transfer = false;
-		value_t data[capacity] = { 1 };
+		value_t data[capacity] = {};
 
 		double operator()(double x) const
 		{
