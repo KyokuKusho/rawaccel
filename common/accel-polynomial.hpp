@@ -105,7 +105,7 @@ namespace rawaccel {
 
 		accel_classic(const accel_args& args) :
 			negatable(args.offset, args.cap.y),
-			cap({ args.cap.x, fabs(args.cap.y - 1) }),
+			cap({ args.cap.x - args.offset, fabs(args.cap.y - 1) }),
 			power(args.power - 1),
 			accel(traits::scale(cap.x, cap.y, power)) {}
 	};

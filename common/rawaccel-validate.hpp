@@ -112,6 +112,12 @@ namespace rawaccel {
 			if (args.cap.x <= 0 || args.cap.y <= 0) {
 				error("cap"" must be positive");
 			}
+
+			if (args.cap.x <= args.offset &&
+				args.mode == accel_mode::classic &&
+				args.lut_args.mode == table_mode::off) {
+				error("x cap must be greater than offset");
+			}
 		};
 
 		valid_ret_t ret;
