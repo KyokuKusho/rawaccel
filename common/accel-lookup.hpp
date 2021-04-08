@@ -54,7 +54,7 @@ namespace rawaccel {
 	};
 
 	template <typename Lookup>
-	struct lut_base {
+	struct spaced_lut_base {
 		enum { capacity = LUT_CAPACITY };
 		using value_t = float;
 
@@ -70,7 +70,7 @@ namespace rawaccel {
 
 	};
 
-	struct linear_lut : lut_base<linear_lut> {
+	struct linear_lut : spaced_lut_base<linear_lut> {
 		linear_range range;
 		bool transfer = false;
 		value_t data[capacity] = {};
@@ -107,7 +107,7 @@ namespace rawaccel {
 			linear_lut(args.lut_args) {}
 	};
 
-	struct binlog_lut : lut_base<binlog_lut> {
+	struct binlog_lut : spaced_lut_base<binlog_lut> {
 		fp_rep_range range;
 		double x_start;
 		bool transfer = false;
@@ -149,107 +149,48 @@ namespace rawaccel {
 			binlog_lut(args.lut_args) {}
 	};
 
-	struct si_pair { 
-		double slope = 0;
-		double intercept = 0; 
-	};
+	struct arbitrary_lut  {
+		enum { capacity = LUT_CAPACITY / 2 };
 
-	struct arbitrary_lut_point {
-		double applicable_speed = 0;
-		si_pair slope_intercept = {};
-	};
+		int size;
+		bool transfer;
+		vec2<float> data[capacity];
 
-	struct arbitrary_lut {
-		fp_rep_range range;
-		arbitrary_lut_point data[LUT_CAPACITY] = {};
-		int log_lookup[LUT_CAPACITY] = {};
-		double first_point_speed;
-		double last_point_speed;
-		int last_index;
+		arbitrary_lut(const table_args& args) :
+			size(args.num_elements) {}
 
-		double operator()(double speed) const
+		arbitrary_lut(const accel_args& args) :
+			arbitrary_lut(args.lut_args) {}
+
+		double operator()(double x) const
 		{
-			int index = 0;
+			int lo = 0;
+			int hi = size - 2;
 
-			if (speed < first_point_speed)
-			{
-				// Apply from 0 index
-			}
-			else if (speed > last_point_speed)
-			{
-				index = last_index;
-			}
-			else if (speed > range.stop)
-			{
-				index = search_from(log_lookup[LUT_CAPACITY - 1], speed);
-			}
-			else if (speed < range.start)
-			{
-				index = search_from(0, speed);
-			}
-			else
-			{
-				int log_lookup = get_log_index(speed);
-				index = search_from(log_lookup, speed);
-			}
+			if (hi < capacity - 1) {
 
-			return apply(index, speed);
-		}
+				while (lo <= hi) {
+					int mid = (lo + hi) >> 1;
+					auto v = data[mid];
 
-		int inline get_log_index(double speed) const
-		{
-			double speed_log = log(speed) - range.start;
-			int index = (int)floor(speed_log * range.num);
-			return index;
-		}
-
-		int inline search_from(int index, double speed) const
-		{
-			int prev_index;
-
-			do
-			{
-				prev_index = index;
-				index++;
-			}
-			while (index <= last_index && data[index].applicable_speed < speed);
-
-			index--;
-		}
-
-		double inline apply(int index, double speed) const
-		{
-			si_pair pair = data[index].slope_intercept;
-			return pair.slope + pair.intercept / speed;
-		}
-
-		void fill(vec2d* points, int length)
-		{
-			vec2d current = {0, 0};
-			vec2d next;
-			int log_index = 0;
-			double log_inner_iterator = range.start;
-			double log_inner_slice = 1 / range.num;
-			double log_value = pow(2, log_inner_iterator);
-
-			for (int i = 0; i < length; i++)
-			{
-				next = points[i];
-				double slope = (next.y - current.y) / (next.x - current.x);
-				double intercept = next.y - slope * next.x;
-				si_pair current_si = { slope, intercept };
-				arbitrary_lut_point current_lut_point = { next.x, current_si };
-
-				this->data[i] = current_lut_point;
-
-				while (log_value < next.x)
-				{
-					this->log_lookup[log_index] = log_value;
-					log_index++;
-					log_inner_iterator += log_inner_slice;
-					log_value = pow(2, log_inner_iterator);
+					if (x < v.x)	  hi = mid - 1;
+					else if (x > v.x) lo = mid + 1;
+					else return v.y;
 				}
+
+				if (lo > 0) {
+					double x0 = data[lo - 1].x;
+					double t = (x - x0) / (data[lo].x - x0);
+					double y = lerp(data[lo - 1].y, data[lo].y, t);
+					if (transfer) y /= x;
+					return y;
+				}
+
 			}
+
+			double y = data[0].y;
+			if (transfer) y /= x;
+			return y;
 		}
 	};
 }
